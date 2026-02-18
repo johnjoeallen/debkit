@@ -1,4 +1,4 @@
-# DebKit
+# DebKit (WIP)
 
 DebKit is a Rust-based CLI tool for bringing a Debian system into a known, reproducible development-ready state.
 
