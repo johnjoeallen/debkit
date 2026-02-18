@@ -1,0 +1,21 @@
+[package]
+name = "debkit"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "DebKit CLI"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+
+[package.metadata.deb]
+name = "debkit"
+maintainer = "John Allen <john@example.com>"
+section = "utils"
+priority = "optional"
+depends = []
+assets = [
+    ["target/release/debkit", "usr/bin/debkit", "755"],
+    ["README.md", "usr/share/doc/debkit/README.md", "644"],
+]
