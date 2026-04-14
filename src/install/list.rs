@@ -5,6 +5,9 @@ pub fn run() {
         if target.supports_install {
             capabilities.push("install");
         }
+        if target.supports_uninstall {
+            capabilities.push("uninstall");
+        }
         if target.supports_configure {
             capabilities.push("configure");
         }

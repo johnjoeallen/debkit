@@ -3,42 +3,27 @@ use std::process::Command;
 use anyhow::{Context, bail};
 
 pub fn run() -> anyhow::Result<()> {
-    if command_available("rg") {
-        run_command("rg", &["--version"])?;
+    if command_available("git") {
+        println!("git already installed:");
+        run_command("git", &["--version"])?;
         return Ok(());
     }
 
-    install_ripgrep_package()?;
+    install_git_package()?;
 
-    if !command_available("rg") {
-        bail!("`rg` was not found on PATH after installation");
+    if !command_available("git") {
+        bail!("`git` was not found on PATH after installation");
     }
 
-    println!("ripgrep installation complete:");
-    run_command("rg", &["--version"])?;
+    println!("git installation complete:");
+    run_command("git", &["--version"])?;
 
     Ok(())
 }
 
-pub fn uninstall() -> anyhow::Result<()> {
-    if !command_available("rg") {
-        println!("ripgrep is not installed.");
-        return Ok(());
-    }
-
-    run_apt_command(&["remove", "-y", "ripgrep"])?;
-
-    if command_available("rg") {
-        bail!("`rg` is still available on PATH after uninstall");
-    }
-
-    println!("ripgrep uninstalled.");
-    Ok(())
-}
-
-fn install_ripgrep_package() -> anyhow::Result<()> {
+fn install_git_package() -> anyhow::Result<()> {
     run_apt_command(&["update"])?;
-    run_apt_command(&["install", "-y", "ripgrep"])?;
+    run_apt_command(&["install", "-y", "git"])?;
     Ok(())
 }
 
@@ -53,9 +38,7 @@ fn run_apt_command(args: &[&str]) -> anyhow::Result<()> {
         command = Command::new("sudo");
         command.arg("apt").args(args);
     } else {
-        bail!(
-            "installing ripgrep requires root privileges; run as root or install `sudo` and retry"
-        );
+        bail!("installing git requires root privileges; run as root or install `sudo` and retry");
     }
 
     let status = command

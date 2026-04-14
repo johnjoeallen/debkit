@@ -99,11 +99,11 @@ fn run_apt_command(args: &[&str]) -> anyhow::Result<()> {
 
     let mut command;
     if euid == 0 {
-        command = Command::new("apt-get");
+        command = Command::new("apt");
         command.args(args);
     } else if command_available("sudo") {
         command = Command::new("sudo");
-        command.arg("apt-get").args(args);
+        command.arg("apt").args(args);
     } else {
         bail!(
             "installing Variety requires root privileges; run as root or install `sudo` and retry"
@@ -113,9 +113,9 @@ fn run_apt_command(args: &[&str]) -> anyhow::Result<()> {
     let status = command
         .env("DEBIAN_FRONTEND", "noninteractive")
         .status()
-        .context("failed to launch apt-get")?;
+        .context("failed to launch apt")?;
     if !status.success() {
-        bail!("apt-get {} failed with status {}", args.join(" "), status);
+        bail!("apt {} failed with status {}", args.join(" "), status);
     }
 
     Ok(())

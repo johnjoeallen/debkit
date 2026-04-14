@@ -27,6 +27,44 @@ pub fn run(node_version: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn uninstall() -> anyhow::Result<()> {
+    let Some(npm) = managed_program("npm") else {
+        println!("Codex is not installed: managed npm was not found.");
+        return Ok(());
+    };
+
+    if managed_program("codex").is_none() {
+        println!("Codex is not installed.");
+        return Ok(());
+    }
+
+    let prefix = codex_prefix_dir().context("failed to determine per-user npm prefix")?;
+    let status = Command::new(&npm)
+        .args(["uninstall", "-g", "@openai/codex"])
+        .env("NPM_CONFIG_PREFIX", &prefix)
+        .status()
+        .with_context(|| format!("failed to start `{}`", npm.display()))?;
+    if !status.success() {
+        bail!(
+            "command `{}` failed with status {}",
+            format!("{} uninstall -g @openai/codex", npm.display()),
+            status
+        );
+    }
+
+    if let Some(codex) = managed_program("codex") {
+        if codex.exists() {
+            bail!(
+                "`codex` still exists after uninstall at {}",
+                codex.display()
+            );
+        }
+    }
+
+    println!("Codex uninstalled.");
+    Ok(())
+}
+
 fn install_codex_package() -> anyhow::Result<()> {
     let npm = super::npm::managed_program_path("npm")
         .context("`npm` was not found after installing Node.js")?;

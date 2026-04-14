@@ -15,9 +15,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    Configure(ConfigureCommand),
     List,
     Package(PackageCommand),
     Install(InstallCommand),
+    Uninstall(UninstallCommand),
     Status(StatusCommand),
 }
 
@@ -38,14 +40,39 @@ struct InstallCommand {
     command: InstallSubcommand,
 }
 
+#[derive(Debug, Args)]
+struct ConfigureCommand {
+    #[command(subcommand)]
+    command: ConfigureSubcommand,
+}
+
+#[derive(Debug, Args)]
+struct UninstallCommand {
+    #[command(subcommand)]
+    command: UninstallSubcommand,
+}
+
 #[derive(Debug, Subcommand)]
 enum InstallSubcommand {
     Codex(InstallCodexArgs),
+    Git,
     Npm(InstallNpmArgs),
     Ripgrep,
     Rust(InstallRustArgs),
     Variety,
     Foundation,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigureSubcommand {
+    GitPrompt,
+}
+
+#[derive(Debug, Subcommand)]
+enum UninstallSubcommand {
+    Codex,
+    Npm,
+    Ripgrep,
 }
 
 #[derive(Debug, Args)]
@@ -106,6 +133,11 @@ fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Configure(configure) => match configure.command {
+            ConfigureSubcommand::GitPrompt => {
+                install::git_prompt::run()?;
+            }
+        },
         Commands::List => {
             install::list::run();
         }
@@ -124,6 +156,9 @@ fn run() -> anyhow::Result<()> {
         Commands::Install(install) => match install.command {
             InstallSubcommand::Codex(args) => {
                 install::codex::run(args.node_version)?;
+            }
+            InstallSubcommand::Git => {
+                install::git::run()?;
             }
             InstallSubcommand::Npm(args) => {
                 install::npm::run(install::npm::Options {
@@ -145,6 +180,17 @@ fn run() -> anyhow::Result<()> {
             InstallSubcommand::Foundation => {
                 let config = config::load_or_init()?;
                 install::foundation::run(&config)?;
+            }
+        },
+        Commands::Uninstall(uninstall) => match uninstall.command {
+            UninstallSubcommand::Codex => {
+                install::codex::uninstall()?;
+            }
+            UninstallSubcommand::Npm => {
+                install::npm::uninstall()?;
+            }
+            UninstallSubcommand::Ripgrep => {
+                install::ripgrep::uninstall()?;
             }
         },
         Commands::Status(status) => match status.command {
@@ -180,6 +226,17 @@ mod tests {
             cli.command,
             Commands::Install(InstallCommand {
                 command: InstallSubcommand::Codex(_)
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_install_git() {
+        let cli = Cli::try_parse_from(["debkit", "install", "git"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Git
             })
         ));
     }
@@ -237,6 +294,50 @@ mod tests {
             cli.command,
             Commands::Install(InstallCommand {
                 command: InstallSubcommand::Foundation
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_configure_git_prompt() {
+        let cli = Cli::try_parse_from(["debkit", "configure", "git-prompt"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Configure(ConfigureCommand {
+                command: ConfigureSubcommand::GitPrompt
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_uninstall_codex() {
+        let cli = Cli::try_parse_from(["debkit", "uninstall", "codex"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Uninstall(UninstallCommand {
+                command: UninstallSubcommand::Codex
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_uninstall_npm() {
+        let cli = Cli::try_parse_from(["debkit", "uninstall", "npm"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Uninstall(UninstallCommand {
+                command: UninstallSubcommand::Npm
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_uninstall_ripgrep() {
+        let cli = Cli::try_parse_from(["debkit", "uninstall", "ripgrep"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Uninstall(UninstallCommand {
+                command: UninstallSubcommand::Ripgrep
             })
         ));
     }

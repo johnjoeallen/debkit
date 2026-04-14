@@ -15,6 +15,10 @@ pub fn run(config: &DebkitConfig) -> anyhow::Result<()> {
                 super::codex::run(config.npm.version.clone())
                     .context("failed to install foundation target `codex`")?;
             }
+            "git" => {
+                println!("Installing foundation target: git");
+                super::git::run().context("failed to install foundation target `git`")?;
+            }
             "npm" => {
                 println!("Installing foundation target: npm");
                 super::npm::run(super::npm::Options {

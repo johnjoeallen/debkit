@@ -67,6 +67,55 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn uninstall() -> anyhow::Result<()> {
+    let home = home_dir()?;
+    let install_root = managed_install_root_for_home(&home);
+    let current_link = managed_current_link_for_home(&home);
+    let local_prefix = managed_prefix_dir_for_home(&home);
+    let local_node_modules = local_prefix.join("lib").join("node_modules");
+    let managed_bins = [
+        managed_program_path_for_home(&home, "node"),
+        managed_program_path_for_home(&home, "npm"),
+        managed_program_path_for_home(&home, "npx"),
+        managed_program_path_for_home(&home, "codex"),
+    ];
+
+    let mut removed_any = false;
+
+    for bin in managed_bins {
+        if bin.exists() || fs::symlink_metadata(&bin).is_ok() {
+            fs::remove_file(&bin).with_context(|| format!("failed to remove {}", bin.display()))?;
+            removed_any = true;
+        }
+    }
+
+    if fs::symlink_metadata(&current_link).is_ok() {
+        fs::remove_file(&current_link)
+            .with_context(|| format!("failed to remove {}", current_link.display()))?;
+        removed_any = true;
+    }
+
+    if install_root.exists() {
+        fs::remove_dir_all(&install_root)
+            .with_context(|| format!("failed to remove {}", install_root.display()))?;
+        removed_any = true;
+    }
+
+    if local_node_modules.exists() {
+        fs::remove_dir_all(&local_node_modules)
+            .with_context(|| format!("failed to remove {}", local_node_modules.display()))?;
+        removed_any = true;
+    }
+
+    if !removed_any {
+        println!("npm is not installed.");
+        return Ok(());
+    }
+
+    println!("npm uninstalled.");
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 struct InstallSpec {
     release_path: String,
@@ -280,6 +329,10 @@ fn managed_install_root_for_home(home: &Path) -> PathBuf {
         .join("share")
         .join("debkit")
         .join("nodejs")
+}
+
+fn managed_prefix_dir_for_home(home: &Path) -> PathBuf {
+    home.join(".local")
 }
 
 fn managed_tmp_dir_for_home(home: &Path) -> PathBuf {
