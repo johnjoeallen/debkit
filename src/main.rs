@@ -40,6 +40,9 @@ struct InstallCommand {
 
 #[derive(Debug, Subcommand)]
 enum InstallSubcommand {
+    Codex(InstallCodexArgs),
+    Npm(InstallNpmArgs),
+    Ripgrep,
     Rust(InstallRustArgs),
     Variety,
     Foundation,
@@ -60,6 +63,18 @@ enum StatusSubcommand {
 struct InstallRustArgs {
     #[arg(long)]
     reinstall: bool,
+}
+
+#[derive(Debug, Args)]
+struct InstallNpmArgs {
+    #[arg(long, default_value = "latest")]
+    version: String,
+}
+
+#[derive(Debug, Args)]
+struct InstallCodexArgs {
+    #[arg(long = "node-version", default_value = "latest")]
+    node_version: String,
 }
 
 #[derive(Debug, Args)]
@@ -107,6 +122,17 @@ fn run() -> anyhow::Result<()> {
             }
         },
         Commands::Install(install) => match install.command {
+            InstallSubcommand::Codex(args) => {
+                install::codex::run(args.node_version)?;
+            }
+            InstallSubcommand::Npm(args) => {
+                install::npm::run(install::npm::Options {
+                    version: args.version,
+                })?;
+            }
+            InstallSubcommand::Ripgrep => {
+                install::ripgrep::run()?;
+            }
             InstallSubcommand::Rust(args) => {
                 install::rust::run(install::rust::Options {
                     reinstall: args.reinstall,
@@ -143,6 +169,63 @@ mod tests {
             cli.command,
             Commands::Install(InstallCommand {
                 command: InstallSubcommand::Variety
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_install_codex() {
+        let cli = Cli::try_parse_from(["debkit", "install", "codex"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Codex(_)
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_install_npm() {
+        let cli = Cli::try_parse_from(["debkit", "install", "npm"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Npm(_)
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_install_npm_with_version() {
+        let cli =
+            Cli::try_parse_from(["debkit", "install", "npm", "--version", "24.12.0"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Npm(InstallNpmArgs { version })
+            }) if version == "24.12.0"
+        ));
+    }
+
+    #[test]
+    fn parses_install_codex_with_node_version() {
+        let cli = Cli::try_parse_from(["debkit", "install", "codex", "--node-version", "latest"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Codex(InstallCodexArgs { node_version })
+            }) if node_version == "latest"
+        ));
+    }
+
+    #[test]
+    fn parses_install_ripgrep() {
+        let cli = Cli::try_parse_from(["debkit", "install", "ripgrep"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Ripgrep
             })
         ));
     }

@@ -5,12 +5,15 @@ use anyhow::{Context, bail};
 
 pub const DEFAULT_WALLPAPERS_FOLDER: &str = "/net/spitfire/data/share/jallen/wallpapers";
 pub const DEFAULT_INTERVAL_MINUTES: u32 = 10;
+pub const DEFAULT_FOUNDATION_INSTALL: &[&str] = &["ripgrep"];
+pub const DEFAULT_NPM_VERSION: &str = "latest";
 
 #[derive(Debug, Clone)]
 pub struct DebkitConfig {
     pub wallpapers: WallpapersConfig,
     pub variety: VarietyConfig,
     pub foundation: FoundationConfig,
+    pub npm: NpmConfig,
 }
 
 impl Default for DebkitConfig {
@@ -19,6 +22,7 @@ impl Default for DebkitConfig {
             wallpapers: WallpapersConfig::default(),
             variety: VarietyConfig::default(),
             foundation: FoundationConfig::default(),
+            npm: NpmConfig::default(),
         }
     }
 }
@@ -49,9 +53,33 @@ impl Default for VarietyConfig {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FoundationConfig {
     pub install: Vec<String>,
+}
+
+impl Default for FoundationConfig {
+    fn default() -> Self {
+        Self {
+            install: DEFAULT_FOUNDATION_INSTALL
+                .iter()
+                .map(|target| (*target).to_string())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NpmConfig {
+    pub version: String,
+}
+
+impl Default for NpmConfig {
+    fn default() -> Self {
+        Self {
+            version: DEFAULT_NPM_VERSION.to_string(),
+        }
+    }
 }
 
 pub fn load_or_init() -> anyhow::Result<DebkitConfig> {
@@ -85,6 +113,9 @@ pub fn load_or_init_for_home(home: &Path) -> anyhow::Result<DebkitConfig> {
     if config.variety.interval_minutes == 0 {
         bail!("`variety.interval_minutes` must be greater than 0");
     }
+    if config.npm.version.trim().is_empty() {
+        bail!("`npm.version` must not be empty");
+    }
 
     Ok(config)
 }
@@ -104,11 +135,15 @@ struct MissingKeys {
     wallpapers_folder: bool,
     variety_interval_minutes: bool,
     foundation_install: bool,
+    npm_version: bool,
 }
 
 impl MissingKeys {
     fn any_missing(self) -> bool {
-        self.wallpapers_folder || self.variety_interval_minutes || self.foundation_install
+        self.wallpapers_folder
+            || self.variety_interval_minutes
+            || self.foundation_install
+            || self.npm_version
     }
 }
 
@@ -119,6 +154,7 @@ fn parse_config(raw: &str) -> anyhow::Result<(DebkitConfig, MissingKeys)> {
     let mut seen_wallpapers_folder = false;
     let mut seen_variety_interval = false;
     let mut seen_foundation_install = false;
+    let mut seen_npm_version = false;
 
     for (idx, line) in raw.lines().enumerate() {
         let stripped = strip_comment(line);
@@ -161,6 +197,12 @@ fn parse_config(raw: &str) -> anyhow::Result<(DebkitConfig, MissingKeys)> {
                 })?;
                 seen_foundation_install = true;
             }
+            ("npm", "version") => {
+                config.npm.version = parse_string_value(value).with_context(|| {
+                    format!("invalid string at line {} for npm.version", idx + 1)
+                })?;
+                seen_npm_version = true;
+            }
             _ => {}
         }
     }
@@ -169,6 +211,7 @@ fn parse_config(raw: &str) -> anyhow::Result<(DebkitConfig, MissingKeys)> {
         wallpapers_folder: !seen_wallpapers_folder,
         variety_interval_minutes: !seen_variety_interval,
         foundation_install: !seen_foundation_install,
+        npm_version: !seen_npm_version,
     };
 
     Ok((config, missing))
@@ -228,10 +271,11 @@ fn strip_comment(line: &str) -> String {
 
 fn serialize_config(config: &DebkitConfig) -> String {
     format!(
-        "[wallpapers]\nfolder = \"{}\"\n\n[variety]\ninterval_minutes = {}\n\n[foundation]\ninstall = {}\n",
+        "[wallpapers]\nfolder = \"{}\"\n\n[variety]\ninterval_minutes = {}\n\n[foundation]\ninstall = {}\n\n[npm]\nversion = \"{}\"\n",
         escape_basic(&config.wallpapers.folder),
         config.variety.interval_minutes,
-        serialize_array(&config.foundation.install)
+        serialize_array(&config.foundation.install),
+        escape_basic(&config.npm.version)
     )
 }
 
@@ -264,6 +308,8 @@ mod tests {
 
         assert_eq!(config.wallpapers.folder, DEFAULT_WALLPAPERS_FOLDER);
         assert_eq!(config.variety.interval_minutes, DEFAULT_INTERVAL_MINUTES);
+        assert_eq!(config.foundation.install, vec!["ripgrep".to_string()]);
+        assert_eq!(config.npm.version, DEFAULT_NPM_VERSION);
 
         let config_path = config_path_for_home(&home);
         assert!(config_path.exists());
@@ -283,11 +329,14 @@ mod tests {
         let config = load_or_init_for_home(&home).unwrap();
         assert_eq!(config.wallpapers.folder, "/tmp/walls");
         assert_eq!(config.variety.interval_minutes, DEFAULT_INTERVAL_MINUTES);
-        assert!(config.foundation.install.is_empty());
+        assert_eq!(config.foundation.install, vec!["ripgrep".to_string()]);
+        assert_eq!(config.npm.version, DEFAULT_NPM_VERSION);
 
         let rewritten = fs::read_to_string(config_path).unwrap();
         assert!(rewritten.contains("interval_minutes"));
         assert!(rewritten.contains("/tmp/walls"));
+        assert!(rewritten.contains("install = [\"ripgrep\"]"));
+        assert!(rewritten.contains("version = \"latest\""));
     }
 
     #[test]
@@ -298,6 +347,18 @@ mod tests {
         assert!(missing.wallpapers_folder);
         assert!(missing.variety_interval_minutes);
         assert!(!missing.foundation_install);
+        assert!(missing.npm_version);
+    }
+
+    #[test]
+    fn parses_npm_version() {
+        let raw = "[npm]\nversion = \"24.12.0\"\n";
+        let (config, missing) = parse_config(raw).unwrap();
+        assert_eq!(config.npm.version, "24.12.0");
+        assert!(missing.wallpapers_folder);
+        assert!(missing.variety_interval_minutes);
+        assert!(missing.foundation_install);
+        assert!(!missing.npm_version);
     }
 
     fn temp_home(label: &str) -> PathBuf {

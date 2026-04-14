@@ -10,6 +10,22 @@ pub fn run(config: &DebkitConfig) -> anyhow::Result<()> {
 
     for target in &config.foundation.install {
         match target.as_str() {
+            "codex" => {
+                println!("Installing foundation target: codex");
+                super::codex::run(config.npm.version.clone())
+                    .context("failed to install foundation target `codex`")?;
+            }
+            "npm" => {
+                println!("Installing foundation target: npm");
+                super::npm::run(super::npm::Options {
+                    version: config.npm.version.clone(),
+                })
+                .context("failed to install foundation target `npm`")?;
+            }
+            "ripgrep" => {
+                println!("Installing foundation target: ripgrep");
+                super::ripgrep::run().context("failed to install foundation target `ripgrep`")?;
+            }
             "rust" => {
                 println!("Installing foundation target: rust");
                 super::rust::run(super::rust::Options { reinstall: false })

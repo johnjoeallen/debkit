@@ -1,5 +1,8 @@
+pub mod codex;
 pub mod foundation;
 pub mod list;
+pub mod npm;
+pub mod ripgrep;
 pub mod rust;
 pub mod variety;
 
@@ -13,6 +16,24 @@ pub struct InstallTarget {
 
 pub fn targets() -> &'static [InstallTarget] {
     &[
+        InstallTarget {
+            name: "npm",
+            supports_install: true,
+            supports_configure: false,
+            description: "Node.js and npm from official Node.js binaries",
+        },
+        InstallTarget {
+            name: "codex",
+            supports_install: true,
+            supports_configure: false,
+            description: "OpenAI Codex CLI via npm",
+        },
+        InstallTarget {
+            name: "ripgrep",
+            supports_install: true,
+            supports_configure: false,
+            description: "ripgrep recursive search tool",
+        },
         InstallTarget {
             name: "rust",
             supports_install: true,
