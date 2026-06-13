@@ -26,6 +26,26 @@ pub fn run(config: &DebkitConfig) -> anyhow::Result<()> {
                 })
                 .context("failed to install foundation target `npm`")?;
             }
+            "sudo-nopass" | "sudo_nopass" | "admin-group-nopass" | "admin_group_nopass" => {
+                println!("Installing foundation target: sudo-nopass");
+                super::sudo_nopass::run(&config.sudo_nopass)
+                    .context("failed to install foundation target `sudo-nopass`")?;
+            }
+            "nis" => {
+                println!("Installing foundation target: nis");
+                super::nis::run(super::nis::Role::Configured, &config.nis)
+                    .context("failed to install foundation target `nis`")?;
+            }
+            "nis-client" | "nis_client" => {
+                println!("Installing foundation target: nis-client");
+                super::nis::run(super::nis::Role::Client, &config.nis)
+                    .context("failed to install foundation target `nis-client`")?;
+            }
+            "nis-server" | "nis_server" => {
+                println!("Installing foundation target: nis-server");
+                super::nis::run(super::nis::Role::Server, &config.nis)
+                    .context("failed to install foundation target `nis-server`")?;
+            }
             "ripgrep" => {
                 println!("Installing foundation target: ripgrep");
                 super::ripgrep::run().context("failed to install foundation target `ripgrep`")?;
@@ -39,6 +59,11 @@ pub fn run(config: &DebkitConfig) -> anyhow::Result<()> {
                 println!("Installing foundation target: variety");
                 super::variety::run(config)
                     .context("failed to install foundation target `variety`")?;
+            }
+            "wake-on-lan" | "wake_on_lan" | "wol" => {
+                println!("Installing foundation target: wake-on-lan");
+                super::wake_on_lan::run(config)
+                    .context("failed to install foundation target `wake-on-lan`")?;
             }
             other => {
                 eprintln!("warning: unsupported foundation target `{other}` in config; skipping");

@@ -1,6 +1,6 @@
 [package]
 name = "debkit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "DebKit CLI"
@@ -8,6 +8,7 @@ description = "DebKit CLI"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
+toml_edit = "0.22"
 
 [package.metadata.deb]
 name = "debkit"

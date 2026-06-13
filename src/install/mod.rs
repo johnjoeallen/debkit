@@ -3,10 +3,13 @@ pub mod foundation;
 pub mod git;
 pub mod git_prompt;
 pub mod list;
+pub mod nis;
 pub mod npm;
 pub mod ripgrep;
 pub mod rust;
+pub mod sudo_nopass;
 pub mod variety;
+pub mod wake_on_lan;
 
 #[derive(Debug, Clone, Copy)]
 pub struct InstallTarget {
@@ -41,6 +44,27 @@ pub fn targets() -> &'static [InstallTarget] {
             description: "Node.js and npm from official Node.js binaries",
         },
         InstallTarget {
+            name: "nis",
+            supports_install: true,
+            supports_uninstall: false,
+            supports_configure: true,
+            description: "NIS client and server packages",
+        },
+        InstallTarget {
+            name: "nis-client",
+            supports_install: true,
+            supports_uninstall: false,
+            supports_configure: true,
+            description: "NIS client packages",
+        },
+        InstallTarget {
+            name: "nis-server",
+            supports_install: true,
+            supports_uninstall: false,
+            supports_configure: true,
+            description: "NIS server packages",
+        },
+        InstallTarget {
             name: "codex",
             supports_install: true,
             supports_uninstall: true,
@@ -62,6 +86,13 @@ pub fn targets() -> &'static [InstallTarget] {
             description: "Rust toolchain via rustup",
         },
         InstallTarget {
+            name: "sudo-nopass",
+            supports_install: true,
+            supports_uninstall: false,
+            supports_configure: false,
+            description: "Passwordless sudo for configured users",
+        },
+        InstallTarget {
             name: "variety",
             supports_install: true,
             supports_uninstall: false,
@@ -74,6 +105,13 @@ pub fn targets() -> &'static [InstallTarget] {
             supports_uninstall: false,
             supports_configure: false,
             description: "Installs configured base targets from debkit config",
+        },
+        InstallTarget {
+            name: "wake-on-lan",
+            supports_install: true,
+            supports_uninstall: false,
+            supports_configure: false,
+            description: "Inspect and enable wired Ethernet Wake-on-LAN",
         },
     ]
 }
