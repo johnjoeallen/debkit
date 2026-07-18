@@ -93,8 +93,19 @@ targets enabled or represented with safe defaults:
 
 ```toml
 [foundation]
-install = ["git", "ripgrep", "rust", "npm", "codex", "variety", "nis", "wake-on-lan"]
+install = ["essentials", "git", "ripgrep", "rust", "npm", "codex", "variety", "nis", "wake-on-lan"]
 ```
+
+### Essentials
+
+`install essentials` installs the baseline Debian packages DebKit expects on a fresh workstation:
+
+```toml
+[essentials]
+packages = ["curl", "wget", "zip", "unzip", "rsync", "ca-certificates", "gnupg", "apt-transport-https", "neovim"]
+```
+
+The target only runs `apt-get update` when one or more configured packages are missing.
 
 The host file supplements that base and only needs host-specific differences. For example, to
 disable Wake-on-LAN only on one host:

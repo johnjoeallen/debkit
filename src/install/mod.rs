@@ -1,4 +1,6 @@
+pub mod apt;
 pub mod codex;
+pub mod essentials;
 pub mod foundation;
 pub mod git;
 pub mod git_prompt;
@@ -22,6 +24,13 @@ pub struct InstallTarget {
 
 pub fn targets() -> &'static [InstallTarget] {
     &[
+        InstallTarget {
+            name: "essentials",
+            supports_install: true,
+            supports_uninstall: false,
+            supports_configure: false,
+            description: "Baseline CLI packages required for provisioning",
+        },
         InstallTarget {
             name: "git",
             supports_install: true,

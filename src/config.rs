@@ -7,6 +7,7 @@ use toml_edit::{Array, DocumentMut, Item, Table, Value, value};
 pub const DEFAULT_WALLPAPERS_FOLDER: &str = "";
 pub const DEFAULT_INTERVAL_MINUTES: u32 = 10;
 pub const DEFAULT_FOUNDATION_INSTALL: &[&str] = &[
+    "essentials",
     "git",
     "ripgrep",
     "rust",
@@ -15,6 +16,17 @@ pub const DEFAULT_FOUNDATION_INSTALL: &[&str] = &[
     "variety",
     "nis",
     "wake-on-lan",
+];
+pub const DEFAULT_ESSENTIAL_PACKAGES: &[&str] = &[
+    "curl",
+    "wget",
+    "zip",
+    "unzip",
+    "rsync",
+    "ca-certificates",
+    "gnupg",
+    "apt-transport-https",
+    "neovim",
 ];
 pub const DEFAULT_NPM_VERSION: &str = "latest";
 pub const DEFAULT_WOL_MODE: &str = "magic";
@@ -35,6 +47,7 @@ pub struct DebkitConfig {
     pub wallpapers: WallpapersConfig,
     pub variety: VarietyConfig,
     pub foundation: FoundationConfig,
+    pub essentials: EssentialsConfig,
     pub npm: NpmConfig,
     pub sudo_nopass: SudoNopassConfig,
     pub nis: NisConfig,
@@ -48,6 +61,7 @@ impl Default for DebkitConfig {
             wallpapers: WallpapersConfig::default(),
             variety: VarietyConfig::default(),
             foundation: FoundationConfig::default(),
+            essentials: EssentialsConfig::default(),
             npm: NpmConfig::default(),
             sudo_nopass: SudoNopassConfig::default(),
             nis: NisConfig::default(),
@@ -115,6 +129,22 @@ impl Default for FoundationConfig {
             install: DEFAULT_FOUNDATION_INSTALL
                 .iter()
                 .map(|target| (*target).to_string())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EssentialsConfig {
+    pub packages: Vec<String>,
+}
+
+impl Default for EssentialsConfig {
+    fn default() -> Self {
+        Self {
+            packages: DEFAULT_ESSENTIAL_PACKAGES
+                .iter()
+                .map(|package| (*package).to_string())
                 .collect(),
         }
     }
@@ -396,6 +426,9 @@ fn apply_host_overlay(base: &mut DebkitConfig, overlay: DebkitConfig, missing: M
     if !missing.foundation_install {
         base.foundation.install = overlay.foundation.install;
     }
+    if !missing.essentials_packages {
+        base.essentials.packages = overlay.essentials.packages;
+    }
     if !missing.npm_version {
         base.npm.version = overlay.npm.version;
     }
@@ -583,6 +616,7 @@ struct MissingKeys {
     wallpapers_folder: bool,
     variety_interval_minutes: bool,
     foundation_install: bool,
+    essentials_packages: bool,
     npm_version: bool,
     sudo_nopass_enabled: bool,
     sudo_nopass_group: bool,
@@ -614,6 +648,7 @@ impl MissingKeys {
             || self.wallpapers_folder
             || self.variety_interval_minutes
             || self.foundation_install
+            || self.essentials_packages
             || self.npm_version
             || self.sudo_nopass_enabled
             || self.sudo_nopass_group
@@ -662,6 +697,11 @@ fn parse_config(raw: &str) -> anyhow::Result<(DebkitConfig, MissingKeys)> {
     let foundation = table(&document, "foundation")?;
     if let Some(item) = item(foundation, "install") {
         config.foundation.install = string_array_item(item, "foundation.install")?;
+    }
+
+    let essentials = table(&document, "essentials")?;
+    if let Some(item) = item(essentials, "packages") {
+        config.essentials.packages = string_array_item(item, "essentials.packages")?;
     }
 
     let npm = table(&document, "npm")?;
@@ -752,6 +792,7 @@ fn parse_config(raw: &str) -> anyhow::Result<(DebkitConfig, MissingKeys)> {
         wallpapers_folder: item(wallpapers, "folder").is_none(),
         variety_interval_minutes: item(variety, "interval_minutes").is_none(),
         foundation_install: item(foundation, "install").is_none(),
+        essentials_packages: item(essentials, "packages").is_none(),
         npm_version: item(npm, "version").is_none(),
         sudo_nopass_enabled: item(sudo_nopass, "enabled").is_none(),
         sudo_nopass_group: item(sudo_nopass, "group").is_none(),
@@ -864,6 +905,12 @@ fn serialize_config(config: &DebkitConfig) -> String {
         "foundation",
         "install",
         array_item(&config.foundation.install),
+    );
+    set_config_item(
+        &mut document,
+        "essentials",
+        "packages",
+        array_item(&config.essentials.packages),
     );
     set_config_item(&mut document, "npm", "version", value(&config.npm.version));
 
@@ -1018,6 +1065,7 @@ mod tests {
         assert_eq!(
             config.foundation.install,
             vec![
+                "essentials",
                 "git",
                 "ripgrep",
                 "rust",
@@ -1027,6 +1075,10 @@ mod tests {
                 "nis",
                 "wake-on-lan"
             ]
+        );
+        assert_eq!(
+            config.essentials.packages,
+            DEFAULT_ESSENTIAL_PACKAGES.to_vec()
         );
         assert_eq!(config.npm.version, DEFAULT_NPM_VERSION);
         assert!(!config.sudo_nopass.enabled);
@@ -1077,6 +1129,7 @@ mod tests {
         assert_eq!(
             config.foundation.install,
             vec![
+                "essentials",
                 "git",
                 "ripgrep",
                 "rust",
@@ -1086,6 +1139,10 @@ mod tests {
                 "nis",
                 "wake-on-lan"
             ]
+        );
+        assert_eq!(
+            config.essentials.packages,
+            DEFAULT_ESSENTIAL_PACKAGES.to_vec()
         );
         assert_eq!(config.npm.version, DEFAULT_NPM_VERSION);
         assert!(!config.sudo_nopass.enabled);
@@ -1098,8 +1155,10 @@ mod tests {
         assert!(rewritten.contains("interval_minutes"));
         assert!(rewritten.contains("/tmp/walls"));
         assert!(rewritten.contains(
-            "install = [\"git\", \"ripgrep\", \"rust\", \"npm\", \"codex\", \"variety\", \"nis\", \"wake-on-lan\"]"
+            "install = [\"essentials\", \"git\", \"ripgrep\", \"rust\", \"npm\", \"codex\", \"variety\", \"nis\", \"wake-on-lan\"]"
         ));
+        assert!(rewritten.contains("[essentials]"));
+        assert!(rewritten.contains("packages = [\"curl\", \"wget\", \"zip\", \"unzip\", \"rsync\", \"ca-certificates\", \"gnupg\", \"apt-transport-https\", \"neovim\"]"));
         assert!(rewritten.contains("[sudo_nopass]"));
         assert!(rewritten.contains("enabled = false"));
         assert!(rewritten.contains("version = \"latest\""));
@@ -1118,6 +1177,14 @@ mod tests {
         assert!(missing.variety_interval_minutes);
         assert!(!missing.foundation_install);
         assert!(missing.npm_version);
+    }
+
+    #[test]
+    fn parses_essentials_packages_array() {
+        let raw = "[essentials]\npackages = [\"curl\", \"jq\"]\n";
+        let (config, missing) = parse_config(raw).unwrap();
+        assert_eq!(config.essentials.packages, vec!["curl", "jq"]);
+        assert!(!missing.essentials_packages);
     }
 
     #[test]

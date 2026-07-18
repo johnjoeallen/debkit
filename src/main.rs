@@ -63,6 +63,7 @@ struct UninstallCommand {
 #[derive(Debug, Subcommand)]
 enum InstallSubcommand {
     Codex(InstallCodexArgs),
+    Essentials,
     Git,
     Nis,
     NisClient,
@@ -239,6 +240,10 @@ fn run() -> anyhow::Result<()> {
             InstallSubcommand::Codex(args) => {
                 install::codex::run(args.node_version)?;
             }
+            InstallSubcommand::Essentials => {
+                let config = config::load_or_init()?;
+                install::essentials::run(&config.essentials)?;
+            }
             InstallSubcommand::Git => {
                 install::git::run()?;
             }
@@ -343,6 +348,17 @@ mod tests {
             cli.command,
             Commands::Install(InstallCommand {
                 command: InstallSubcommand::Codex(_)
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_install_essentials() {
+        let cli = Cli::try_parse_from(["debkit", "install", "essentials"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Essentials
             })
         ));
     }

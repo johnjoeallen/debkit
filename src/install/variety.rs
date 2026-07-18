@@ -89,35 +89,7 @@ fn configure_variety(user: &UserContext, config: &DebkitConfig) -> anyhow::Resul
 }
 
 fn install_variety_package() -> anyhow::Result<()> {
-    run_apt_command(&["update"])?;
-    run_apt_command(&["install", "-y", "variety"])?;
-    Ok(())
-}
-
-fn run_apt_command(args: &[&str]) -> anyhow::Result<()> {
-    let euid = current_euid()?;
-
-    let mut command;
-    if euid == 0 {
-        command = Command::new("apt");
-        command.args(args);
-    } else if command_available("sudo") {
-        command = Command::new("sudo");
-        command.arg("apt").args(args);
-    } else {
-        bail!(
-            "installing Variety requires root privileges; run as root or install `sudo` and retry"
-        );
-    }
-
-    let status = command
-        .env("DEBIAN_FRONTEND", "noninteractive")
-        .status()
-        .context("failed to launch apt")?;
-    if !status.success() {
-        bail!("apt {} failed with status {}", args.join(" "), status);
-    }
-
+    super::apt::install_missing(&["variety"])?;
     Ok(())
 }
 

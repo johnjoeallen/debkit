@@ -26,7 +26,7 @@ pub fn uninstall() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    run_apt_command(&["remove", "-y", "ripgrep"])?;
+    super::apt::remove(&["ripgrep"])?;
 
     if command_available("rg") {
         bail!("`rg` is still available on PATH after uninstall");
@@ -37,35 +37,7 @@ pub fn uninstall() -> anyhow::Result<()> {
 }
 
 fn install_ripgrep_package() -> anyhow::Result<()> {
-    run_apt_command(&["update"])?;
-    run_apt_command(&["install", "-y", "ripgrep"])?;
-    Ok(())
-}
-
-fn run_apt_command(args: &[&str]) -> anyhow::Result<()> {
-    let euid = current_euid()?;
-
-    let mut command;
-    if euid == 0 {
-        command = Command::new("apt");
-        command.args(args);
-    } else if command_available("sudo") {
-        command = Command::new("sudo");
-        command.arg("apt").args(args);
-    } else {
-        bail!(
-            "installing ripgrep requires root privileges; run as root or install `sudo` and retry"
-        );
-    }
-
-    let status = command
-        .env("DEBIAN_FRONTEND", "noninteractive")
-        .status()
-        .context("failed to launch apt")?;
-    if !status.success() {
-        bail!("apt {} failed with status {}", args.join(" "), status);
-    }
-
+    super::apt::install_missing(&["ripgrep"])?;
     Ok(())
 }
 
@@ -90,20 +62,4 @@ fn command_available(program: &str) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
-}
-
-fn current_euid() -> anyhow::Result<u32> {
-    let output = Command::new("id")
-        .arg("-u")
-        .output()
-        .context("failed to run `id -u`")?;
-    if !output.status.success() {
-        bail!("`id -u` failed with status {}", output.status);
-    }
-
-    let stdout = String::from_utf8(output.stdout).context("`id -u` returned non-UTF-8 output")?;
-    let trimmed = stdout.trim();
-    trimmed
-        .parse::<u32>()
-        .with_context(|| format!("failed to parse `id -u` output `{trimmed}`"))
 }
