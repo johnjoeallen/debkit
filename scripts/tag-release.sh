@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-if [[ -n "$(git status --porcelain)" ]]; then
+if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Working tree has uncommitted changes; commit or stash before tagging." >&2
   exit 1
 fi
