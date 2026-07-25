@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install --locked cargo-deb
+
+      - name: Check tag matches Cargo.toml version
+        run: |
+          pkg_version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$pkg_version" != "$tag_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $pkg_version" >&2
+            exit 1
+          fi
+
+      - name: Build .deb package
+        run: cargo run -- package deb --release --verbose
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
+          generate_release_notes: true
