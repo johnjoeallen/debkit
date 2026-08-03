@@ -10,17 +10,17 @@ pub(crate) const DEFAULTDOMAIN_PATH: &str = "/etc/defaultdomain";
 pub(crate) const YP_CONF_PATH: &str = "/etc/yp.conf";
 pub(crate) const NSSWITCH_PATH: &str = "/etc/nsswitch.conf";
 pub(crate) const YP_MAP_ROOT: &str = "/var/yp";
-const YPSERVERS_SOURCE_PATH: &str = "/var/yp/ypservers";
-const YPINIT_PATH: &str = "/usr/lib/yp/ypinit";
+pub(crate) const YPSERVERS_SOURCE_PATH: &str = "/var/yp/ypservers";
+pub(crate) const YPINIT_PATH: &str = "/usr/lib/yp/ypinit";
 const YPXFR_PATH: &str = "/usr/lib/yp/ypxfr";
-const MAKEDBM_PATH: &str = "/usr/lib/yp/makedbm";
-const YPPUSH_PATH: &str = "/usr/sbin/yppush";
+pub(crate) const MAKEDBM_PATH: &str = "/usr/lib/yp/makedbm";
+pub(crate) const YPPUSH_PATH: &str = "/usr/sbin/yppush";
 const YPXFR_REFRESH_SCRIPTS: &[&str] = &[
     "/usr/lib/yp/ypxfr_1perhour",
     "/usr/lib/yp/ypxfr_2perday",
     "/usr/lib/yp/ypxfr_1perday",
 ];
-const FALLBACK_MAPS: &[&str] = &[
+pub(crate) const FALLBACK_MAPS: &[&str] = &[
     "rpc.bynumber",
     "hosts.byname",
     "netid.byname",
@@ -422,7 +422,7 @@ pub(crate) fn render_yp_conf(domain: &str, servers: &[&str]) -> String {
     lines.join("\n")
 }
 
-fn render_ypservers_source(master: &str, slaves: &[String]) -> String {
+pub(crate) fn render_ypservers_source(master: &str, slaves: &[String]) -> String {
     let mut hosts = vec![master.to_string()];
     hosts.extend(slaves.iter().cloned());
     let mut out = nonempty_unique(hosts.iter().map(String::as_str)).join("\n");
@@ -430,7 +430,7 @@ fn render_ypservers_source(master: &str, slaves: &[String]) -> String {
     out
 }
 
-fn render_ypservers_makedbm_input(master: &str, slaves: &[String]) -> String {
+pub(crate) fn render_ypservers_makedbm_input(master: &str, slaves: &[String]) -> String {
     let mut hosts = vec![master.to_string()];
     hosts.extend(slaves.iter().cloned());
     let mut out = nonempty_unique(hosts.iter().map(String::as_str))
@@ -1057,7 +1057,7 @@ fn current_hostname() -> anyhow::Result<String> {
     Ok(capture("hostname", &[])?.trim().to_string())
 }
 
-fn current_fqdn(domain: &str) -> anyhow::Result<String> {
+pub(crate) fn current_fqdn(domain: &str) -> anyhow::Result<String> {
     let fqdn = capture("hostname", &["-f"])
         .ok()
         .map(|value| value.trim().to_string())
