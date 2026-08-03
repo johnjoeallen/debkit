@@ -64,6 +64,10 @@ impl Module for HardwareRgb {
         "hardware.rgb"
     }
 
+    fn description(&self) -> &'static str {
+        "i2c-dev kernel module prerequisite for motherboard/SMBus RGB control"
+    }
+
     fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
         let openrgb_installed = exec::command_available("openrgb");
         let i2c_related_modules = read_i2c_related_modules();

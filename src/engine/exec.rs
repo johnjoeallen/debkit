@@ -268,6 +268,18 @@ pub fn apt_update_install(packages: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Used by `engine::apply::rollback` to undo `InstallPackages`, and only ever called
+/// with the subset of packages that weren't already present before `apply` — never a
+/// package the user already had for unrelated reasons.
+pub fn apt_remove(packages: &[&str]) -> anyhow::Result<()> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec!["remove", "-y"];
+    args.extend(packages);
+    run_apt_command(&args)
+}
+
 fn run_apt_command(args: &[&str]) -> anyhow::Result<()> {
     let euid = current_euid()?;
     let mut command;
@@ -293,7 +305,7 @@ fn run_apt_command(args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn package_installed(package: &str) -> anyhow::Result<bool> {
+pub(crate) fn package_installed(package: &str) -> anyhow::Result<bool> {
     let status = Command::new("dpkg-query")
         .args(["-W", "-f=${Status}", package])
         .status()
@@ -336,6 +348,18 @@ pub fn enable_and_start_service(unit: &str) -> anyhow::Result<()> {
 
 pub fn restart_service(unit: &str) -> anyhow::Result<()> {
     run_privileged("systemctl", &["restart", unit])
+}
+
+/// Used by `engine::apply::rollback` to undo `ServiceAction::EnableNow` when the unit
+/// wasn't already enabled beforehand.
+pub fn disable_service(unit: &str) -> anyhow::Result<()> {
+    run_privileged("systemctl", &["disable", unit])
+}
+
+/// Used by `engine::apply::rollback` to undo `ServiceAction::EnableNow` when the unit
+/// wasn't already active beforehand.
+pub fn stop_service(unit: &str) -> anyhow::Result<()> {
+    run_privileged("systemctl", &["stop", unit])
 }
 
 pub fn current_hostname() -> anyhow::Result<String> {

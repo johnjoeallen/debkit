@@ -59,6 +59,10 @@ impl Module for CoreInspect {
         "core.inspect"
     }
 
+    fn description(&self) -> &'static str {
+        "read-only baseline evidence: OS, kernel, failed units, watched packages, NICs"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let data = CoreInspectData {
             hostname: ctx.hostname.clone(),

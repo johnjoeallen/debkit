@@ -45,6 +45,10 @@ impl Module for NetworkFirewall {
         "network.firewall"
     }
 
+    fn description(&self) -> &'static str {
+        "read-only backend/ruleset diagnostics and real TCP-reachability verification"
+    }
+
     fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
         let (ruleset_tables, ruleset_unavailable_reason) = read_ruleset_tables();
         let data = FirewallObservation {

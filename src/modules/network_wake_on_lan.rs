@@ -43,6 +43,10 @@ impl Module for NetworkWakeOnLan {
         "network.wake_on_lan"
     }
 
+    fn description(&self) -> &'static str {
+        "wake-on-LAN enablement via NetworkManager or ethtool, with ownership conflict detection"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let config = &ctx.config.wake_on_lan;
         let report = legacy::collect_report(ctx.config)?;

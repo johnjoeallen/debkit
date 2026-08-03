@@ -38,6 +38,10 @@ impl Module for NetworkTailscale {
         "network.tailscale"
     }
 
+    fn description(&self) -> &'static str {
+        "read-only Tailscale backend/DNS status via `tailscale status --json`"
+    }
+
     fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
         let installed = exec::command_available("tailscale");
         let version = installed

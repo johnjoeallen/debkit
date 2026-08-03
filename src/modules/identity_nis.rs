@@ -67,6 +67,10 @@ impl Module for IdentityNis {
         "identity.nis"
     }
 
+    fn description(&self) -> &'static str {
+        "NIS domain, yp.conf, nsswitch.conf, and master-side map lifecycle"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let config = &ctx.config.nis;
         if !config.enabled {

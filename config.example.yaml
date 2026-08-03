@@ -1,0 +1,144 @@
+# DebKit v2 sample configuration.
+#
+# Lives at ~/.config/debkit/config.yaml (shared defaults), with optional per-host
+# overrides at ~/.config/debkit/hosts/<hostname>.yaml deep-merged on top -- a host
+# file only needs to declare what differs for that host. Every field has an in-code
+# default, so a sparse file is completely fine; this file shows every section for
+# reference.
+#
+# Sections with a `plan()` that can propose real changes (sudo_nopass, nis,
+# wake_on_lan, git, apt, pam, network_interfaces, dns, hardware_reboot,
+# hardware_sleep, hardware_rgb) only act when that section's `enabled: true`.
+# Purely-diagnostic modules -- network.dhcp, network.firewall, systemd.units,
+# identity.nss, core.inspect, developer.git's read side -- have no config section
+# at all and always run read-only regardless of this file.
+#
+# Try any section with:
+#   debkit inspect   <module>   # discover() only
+#   debkit diagnose  <module>   # discover() + compare against this file
+#   debkit plan      <module>   # dry-run of what apply() would do
+#   debkit apply     <module>   # apply + verify, with automatic rollback on failure
+#   debkit verify    <module>   # functional checks only, e.g. after a reboot
+#
+# The values below labeled "observed on tornado" reflect this machine's actual
+# state, confirmed live with `debkit inspect` while building these modules.
+# Everything else is an illustrative placeholder -- adjust to match your host.
+
+debkit:
+  host:
+    name: tornado
+
+  # ------------------------------------------------------------------
+  # Legacy installer targets (install::*) -- plain idempotent installers,
+  # not part of the discover/diagnose/plan/apply/verify lifecycle.
+  # ------------------------------------------------------------------
+
+  wallpapers:
+    folder: /home/jallen/Pictures/Wallpapers
+
+  variety:
+    interval_minutes: 10
+
+  foundation:
+    install: [essentials, git, ripgrep, rust, npm, codex, variety, nis, wake-on-lan]
+
+  essentials:
+    packages:
+      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim]
+
+  npm:
+    version: latest
+
+  # ------------------------------------------------------------------
+  # Lifecycle modules
+  # ------------------------------------------------------------------
+
+  sudo_nopass:
+    enabled: true
+    group: superuser
+    add_current_user: true
+    users: []
+    # true if this group's membership is managed via NIS netgroups instead of
+    # local /etc/group -- skips the local group-creation step.
+    nis_managed: false
+
+  nis:
+    # observed on tornado: already an NIS client, domain dublinux.lan, bound to
+    # 10.0.0.1 -- this declares that state rather than changing it.
+    enabled: true
+    role: client              # master | slave | client
+    domain: dublinux.lan
+    admin_user: jallen
+    local_admin_groups: [sudo]
+    master: ""
+    server: "10.0.0.1"
+    prefer_local: true
+    push_to_slaves: false
+    force_refresh_maps: false
+    slaves: []
+    servers: []
+
+  wake_on_lan:
+    enabled: true
+    interfaces: auto           # or an explicit list: [enp5s0]
+    mode: magic
+    backend: network_manager   # network_manager | ethtool | auto
+    reference_host: tornado
+
+  git:
+    enabled: true
+    credential_helper: store   # store | cache | none | an explicit command
+    credential_store_file: ""  # empty = git's own default (~/.git-credentials)
+
+  apt:
+    # observed on tornado: real apt-cacher-ng proxy at iris:3142. pkg.tailscale.com
+    # is the fix for a real gap found during testing -- it was missing from the
+    # DIRECT-bypass list, so Tailscale's own apt repo silently went through the
+    # proxy instead of straight to the internet.
+    enabled: true
+    proxy: "http://iris:3142"
+    direct_hosts: [pkg.tailscale.com]
+
+  pam:
+    create_home_on_first_login: false
+    services: [login, sshd]
+    skeleton: /etc/skel
+    umask: "0022"
+
+  network_interfaces:
+    # stable NIC naming only (systemd .link files) -- takes effect on next
+    # boot/udev reload, never live. Replace with a real MAC for your host.
+    links:
+      - mac: "aa:bb:cc:dd:ee:ff"
+        name: lan0
+
+  tailscale:
+    # not installed on tornado -- left disabled; diagnostics still run if enabled.
+    enabled: false
+    magic_dns_off_lan: true
+    preserve_lan_dns: true
+
+  dns:
+    # tornado's resolv.conf is NetworkManager-owned, not dnsmasq -- left disabled.
+    enabled: false
+    provider: dnsmasq
+    local_domains: [dublinux.lan]
+    listen: ["127.0.0.1", "10.0.0.1"]
+    encrypted_upstream_address: "127.0.0.1:5053"
+
+  hardware_reboot:
+    # observed on tornado: 128 GiB installed (MSI MAG X870E TOMAHAWK WIFI, AM5).
+    enabled: true
+    expected_memory_gib: 128
+
+  hardware_sleep:
+    # observed on tornado: mem_sleep is already "deep" -- this declares it so
+    # drift (e.g. after a BIOS reset) gets caught and reapplied.
+    enabled: true
+    desired_mem_sleep: deep    # s2idle | deep | "" (don't enforce)
+
+  hardware_rgb:
+    # observed on tornado: i2c-piix4 (SMBus adapter) is loaded but i2c-dev is
+    # not, so no /dev/i2c-* nodes exist and RGB control silently doesn't work.
+    # Enabling this declares and loads i2c-dev to fix exactly that.
+    enabled: true

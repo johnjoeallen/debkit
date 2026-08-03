@@ -46,6 +46,10 @@ impl Module for NetworkDns {
         "network.dns"
     }
 
+    fn description(&self) -> &'static str {
+        "declarative dnsmasq local zones/upstream, resolver-conflict detection, dig verify"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let config = &ctx.config.dns;
 

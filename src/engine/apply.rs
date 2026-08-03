@@ -10,13 +10,29 @@ use crate::engine::exec;
 use crate::engine::plan::{Change, ChangePlan, ServiceActionKind};
 
 /// How to reverse one applied change. `Manual` covers changes the engine cannot safely
-/// undo automatically (arbitrary commands, service actions) — these are recorded so
+/// undo automatically (arbitrary commands, service restarts) — these are recorded so
 /// `debkit rollback` can report them rather than silently no-op.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UndoAction {
     RestoreFile {
         path: PathBuf,
         previous: Option<String>,
+    },
+    /// Reverses `ServiceAction::EnableNow` by restoring whichever of enabled/active
+    /// state wasn't already true beforehand. `ServiceAction::Restart` has no
+    /// meaningful undo — there's nothing to "restore" about a restart once it's
+    /// happened — and stays `Manual`.
+    RestoreServiceState {
+        unit: String,
+        was_enabled: bool,
+        was_active: bool,
+    },
+    /// Reverses `InstallPackages` by removing only the packages that were captured as
+    /// *not* already installed before `apply` ran — never a package the user already
+    /// had for unrelated reasons. Empty when every declared package was already
+    /// present.
+    RemovePackages {
+        packages: Vec<String>,
     },
     Manual {
         note: String,
@@ -106,34 +122,44 @@ fn apply_change(change: &Change) -> anyhow::Result<UndoAction> {
                 ),
             })
         }
-        Change::ServiceAction { unit, action } => {
-            match action {
-                ServiceActionKind::EnableNow => exec::enable_and_start_service(unit)?,
-                ServiceActionKind::Restart => exec::restart_service(unit)?,
+        Change::ServiceAction { unit, action } => match action {
+            ServiceActionKind::EnableNow => {
+                let was_enabled = exec::systemctl_is_enabled(unit);
+                let was_active = exec::systemctl_is_active(unit);
+                exec::enable_and_start_service(unit)?;
+                Ok(UndoAction::RestoreServiceState {
+                    unit: unit.clone(),
+                    was_enabled,
+                    was_active,
+                })
             }
-            Ok(UndoAction::Manual {
-                note: format!(
-                    "`systemctl {} {unit}` is not automatically reversible",
-                    action.as_str()
-                ),
-            })
-        }
+            ServiceActionKind::Restart => {
+                exec::restart_service(unit)?;
+                Ok(UndoAction::Manual {
+                    note: format!("`systemctl restart {unit}` is not automatically reversible"),
+                })
+            }
+        },
         Change::InstallPackages { packages } => {
+            let mut newly_installed = Vec::new();
+            for package in packages {
+                if !exec::package_installed(package)? {
+                    newly_installed.push(package.clone());
+                }
+            }
             let package_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
             exec::apt_update_install(&package_refs)?;
-            Ok(UndoAction::Manual {
-                note: format!(
-                    "installing `{}` is not automatically reversible",
-                    packages.join(", ")
-                ),
+            Ok(UndoAction::RemovePackages {
+                packages: newly_installed,
             })
         }
     }
 }
 
-/// Reverses every entry in `applied`, most-recent first. File restores are undone
-/// automatically; `Manual` entries are reported as warnings on stderr since the engine
-/// cannot safely reverse an arbitrary command or service action.
+/// Reverses every entry in `applied`, most-recent first. File restores, service
+/// enable/start, and package installs are all undone automatically; `Manual` entries
+/// (arbitrary `RunCommand`s, service restarts) are reported as warnings on stderr since
+/// the engine cannot safely reverse them.
 pub fn rollback(applied: &AppliedPlan) -> anyhow::Result<()> {
     let mut unresolved = Vec::new();
     for entry in applied.entries.iter().rev() {
@@ -149,6 +175,36 @@ pub fn rollback(applied: &AppliedPlan) -> anyhow::Result<()> {
                         path.display(),
                         entry.description
                     ));
+                }
+            }
+            UndoAction::RestoreServiceState {
+                unit,
+                was_enabled,
+                was_active,
+            } => {
+                if !was_active && let Err(err) = exec::stop_service(unit) {
+                    unresolved.push(format!(
+                        "failed to stop {unit} for `{}`: {err:#}",
+                        entry.description
+                    ));
+                }
+                if !was_enabled && let Err(err) = exec::disable_service(unit) {
+                    unresolved.push(format!(
+                        "failed to disable {unit} for `{}`: {err:#}",
+                        entry.description
+                    ));
+                }
+            }
+            UndoAction::RemovePackages { packages } => {
+                if !packages.is_empty() {
+                    let package_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                    if let Err(err) = exec::apt_remove(&package_refs) {
+                        unresolved.push(format!(
+                            "failed to remove {} for `{}`: {err:#}",
+                            packages.join(", "),
+                            entry.description
+                        ));
+                    }
                 }
             }
             UndoAction::Manual { note } => {
@@ -236,6 +292,42 @@ fn now_unix() -> u64 {
 mod tests {
     use super::*;
     use crate::engine::plan::Risk;
+
+    #[test]
+    fn restore_service_state_round_trips_through_json() {
+        let undo = UndoAction::RestoreServiceState {
+            unit: "dnsmasq".to_string(),
+            was_enabled: false,
+            was_active: true,
+        };
+        let rendered = serde_json::to_string(&undo).unwrap();
+        let parsed: UndoAction = serde_json::from_str(&rendered).unwrap();
+        match parsed {
+            UndoAction::RestoreServiceState {
+                unit,
+                was_enabled,
+                was_active,
+            } => {
+                assert_eq!(unit, "dnsmasq");
+                assert!(!was_enabled);
+                assert!(was_active);
+            }
+            other => panic!("expected RestoreServiceState, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remove_packages_round_trips_through_json() {
+        let undo = UndoAction::RemovePackages {
+            packages: vec!["dnsmasq".to_string()],
+        };
+        let rendered = serde_json::to_string(&undo).unwrap();
+        let parsed: UndoAction = serde_json::from_str(&rendered).unwrap();
+        match parsed {
+            UndoAction::RemovePackages { packages } => assert_eq!(packages, vec!["dnsmasq"]),
+            other => panic!("expected RemovePackages, got {other:?}"),
+        }
+    }
 
     #[test]
     fn journal_timestamp_parses_matching_filenames() {

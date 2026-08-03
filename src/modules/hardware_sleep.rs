@@ -75,6 +75,10 @@ impl Module for HardwareSleep {
         "hardware.sleep"
     }
 
+    fn description(&self) -> &'static str {
+        "suspend/resume diagnostics and the active /sys/power/mem_sleep mode"
+    }
+
     fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
         let (mem_sleep_available, mem_sleep_active) = read_mem_sleep();
         let power_states_available = read_power_states();

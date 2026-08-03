@@ -33,6 +33,10 @@ impl Module for IdentityPam {
         "identity.pam"
     }
 
+    fn description(&self) -> &'static str {
+        "pam_mkhomedir.so for create-home-on-first-login, per configured PAM service"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let config = &ctx.config.pam;
         if !config.create_home_on_first_login {

@@ -37,6 +37,10 @@ impl Module for IdentityNss {
         "identity.nss"
     }
 
+    fn description(&self) -> &'static str {
+        "local vs. NIS UID/GID collision detection and local-recovery-access check"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let nis_enabled = ctx.config.nis.enabled;
         let root_resolves_locally =

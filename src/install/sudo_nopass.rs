@@ -261,8 +261,8 @@ pub(crate) fn local_group_exists(group: &str) -> bool {
 pub(crate) fn user_exists(user: &str) -> bool {
     Command::new("id")
         .args(["-u", user])
-        .status()
-        .map(|status| status.success())
+        .output()
+        .map(|output| output.status.success())
         .unwrap_or(false)
 }
 

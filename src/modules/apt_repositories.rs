@@ -30,6 +30,10 @@ impl Module for AptRepositories {
         "apt.repositories"
     }
 
+    fn description(&self) -> &'static str {
+        "apt-cacher-ng proxy config and DIRECT-bypass exceptions"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let config = &ctx.config.apt;
 

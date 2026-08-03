@@ -839,11 +839,11 @@ fn run_privileged_command_with_input(
 }
 
 pub(crate) fn package_installed(package: &str) -> anyhow::Result<bool> {
-    let status = Command::new("dpkg-query")
+    let output = Command::new("dpkg-query")
         .args(["-W", "-f=${Status}", package])
-        .status()
+        .output()
         .with_context(|| format!("failed to query package `{package}`"))?;
-    Ok(status.success())
+    Ok(output.status.success())
 }
 
 fn ensure_root_dir(path: &Path) -> anyhow::Result<bool> {

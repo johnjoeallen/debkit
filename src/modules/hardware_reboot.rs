@@ -91,6 +91,10 @@ impl Module for HardwareReboot {
         "hardware.reboot"
     }
 
+    fn description(&self) -> &'static str {
+        "AM5 board/BIOS identification, known-affected-BIOS registry, memory-capacity check"
+    }
+
     fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
         let dmi = read_dmi();
         let registry = load_board_registry();

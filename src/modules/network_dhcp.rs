@@ -29,6 +29,10 @@ impl Module for NetworkDhcp {
         "network.dhcp"
     }
 
+    fn description(&self) -> &'static str {
+        "read-only DHCP server ownership conflict detection and client-backend detection"
+    }
+
     fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
         let isc_dhcp_active = exec::systemctl_is_active("isc-dhcp-server");
         let dnsmasq_active = exec::systemctl_is_active("dnsmasq");

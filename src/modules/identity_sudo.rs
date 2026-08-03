@@ -30,6 +30,10 @@ impl Module for IdentitySudo {
         "identity.sudo"
     }
 
+    fn description(&self) -> &'static str {
+        "passwordless-sudo group, NOPASSWD drop-in, and membership management"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let config = &ctx.config.sudo_nopass;
         if !config.enabled {

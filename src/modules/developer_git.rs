@@ -39,6 +39,10 @@ impl Module for DeveloperGit {
         "developer.git"
     }
 
+    fn description(&self) -> &'static str {
+        "global git credential.helper and credential-store file permissions"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let config = &ctx.config.git;
         let git_installed = exec::command_available("git");

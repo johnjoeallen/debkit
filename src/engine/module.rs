@@ -92,6 +92,9 @@ pub trait Module {
     /// Dotted identifier matching the module's config section, e.g. "network.wake_on_lan".
     fn name(&self) -> &'static str;
 
+    /// One-line human-facing summary, shown by `debkit list`.
+    fn description(&self) -> &'static str;
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation>;
 
     fn diagnose(&self, ctx: &Context, observation: &Observation) -> Diagnosis;

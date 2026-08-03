@@ -62,6 +62,10 @@ impl Module for NetworkInterfaces {
         "network.interfaces"
     }
 
+    fn description(&self) -> &'static str {
+        "interface inventory, manager-ownership conflicts, and stable MAC-based naming"
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let network_manager_active = exec::systemctl_is_active("NetworkManager");
         let networkd_active = exec::systemctl_is_active("systemd-networkd");

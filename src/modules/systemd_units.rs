@@ -36,6 +36,10 @@ impl Module for SystemdUnits {
         "systemd.units"
     }
 
+    fn description(&self) -> &'static str {
+        "read-only report of currently failed systemd units"
+    }
+
     fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
         let system_state = exec::capture("systemctl", &["is-system-running"])
             .unwrap_or_else(|err| err.to_string())

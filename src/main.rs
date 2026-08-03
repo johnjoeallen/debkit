@@ -46,6 +46,8 @@ enum Commands {
     Verify(ModuleArgs),
     #[command(about = "Reverse a module's most recent applied change plan")]
     Rollback(RollbackArgs),
+    #[command(about = "Show the most recently recorded evidence for a module (or every module)")]
+    History(ModuleArgs),
 }
 
 #[derive(Debug, Args)]
@@ -263,6 +265,7 @@ fn run() -> anyhow::Result<()> {
         },
         Commands::List => {
             install::list::run();
+            run_list_modules();
         }
         Commands::Package(pkg) => match pkg.command {
             PackageSubcommand::Deb(args) => {
@@ -369,6 +372,7 @@ fn run() -> anyhow::Result<()> {
         Commands::Apply(args) => run_apply(&args)?,
         Commands::Verify(args) => run_verify(&args)?,
         Commands::Rollback(args) => run_rollback(&args)?,
+        Commands::History(args) => run_history(&args)?,
     }
 
     Ok(())
@@ -382,6 +386,29 @@ fn resolve_modules(selector: &Option<String>) -> anyhow::Result<Vec<Box<dyn Modu
             Ok(vec![module])
         }
         None => Ok(modules::registry()),
+    }
+}
+
+/// Lists every module registered for the `inspect`/`diagnose`/`plan`/`apply`/`verify`
+/// lifecycle, alongside the legacy install targets `install::list::run()` prints —
+/// these modules aren't installable targets, so they didn't previously show up
+/// anywhere in `debkit list`'s output.
+fn run_list_modules() {
+    let mut modules = modules::registry();
+    modules.sort_by_key(|module| module.name());
+    println!("\nLifecycle modules (debkit inspect|diagnose|plan|apply|verify <name>):");
+    let width = modules
+        .iter()
+        .map(|module| module.name().len())
+        .max()
+        .unwrap_or(0);
+    for module in &modules {
+        println!(
+            "  {:width$}  {}",
+            module.name(),
+            module.description(),
+            width = width
+        );
     }
 }
 
@@ -587,6 +614,64 @@ fn run_verify(args: &ModuleArgs) -> anyhow::Result<()> {
                     .map(|detail| format!(" — {detail}"))
                     .unwrap_or_default()
             );
+        }
+    }
+    Ok(())
+}
+
+/// Reads back the evidence `apply`/verify-on-apply already write to
+/// `/var/lib/debkit/<module>/<hostname>.json` — previously write-only from the CLI's
+/// perspective; nothing surfaced it until this command.
+fn run_history(args: &ModuleArgs) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let ctx = ModuleContext {
+        hostname: config.host.name.clone(),
+        config: &config,
+    };
+    for module in resolve_modules(&args.module)? {
+        let evidence = engine::evidence::read_evidence(module.name(), &ctx.hostname)?;
+        match evidence {
+            Some(evidence) if args.json => {
+                println!("{}", serde_json::to_string_pretty(&evidence)?);
+            }
+            Some(evidence) => {
+                println!("== {} ==", module.name());
+                println!("status: {:?}", evidence.status);
+                if let Some(owner) = &evidence.owner {
+                    println!("owner: {owner}");
+                }
+                if !evidence.changes.is_empty() {
+                    println!("changes applied:");
+                    for change in &evidence.changes {
+                        println!("  [{}] {}", change.risk.as_str(), change.description);
+                    }
+                }
+                if !evidence.verification.is_empty() {
+                    println!("verification:");
+                    for check in &evidence.verification {
+                        println!(
+                            "  [{:?}] {}{}",
+                            check.result,
+                            check.check,
+                            check
+                                .detail
+                                .as_deref()
+                                .map(|detail| format!(" — {detail}"))
+                                .unwrap_or_default()
+                        );
+                    }
+                }
+                if !evidence.artifacts.is_empty() {
+                    println!("artifacts: {}", evidence.artifacts.join(", "));
+                }
+            }
+            None => {
+                println!("== {} ==", module.name());
+                println!(
+                    "no evidence recorded (run `debkit apply {}` first)",
+                    module.name()
+                );
+            }
         }
     }
     Ok(())
@@ -980,6 +1065,27 @@ mod tests {
             Commands::Verify(ModuleArgs {
                 module: Some(_),
                 ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "history", "core.inspect"])
+                .unwrap()
+                .command,
+            Commands::History(ModuleArgs {
+                module: Some(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_history_without_module_selector() {
+        let cli = Cli::try_parse_from(["debkit", "history"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::History(ModuleArgs {
+                module: None,
+                json: false
             })
         ));
     }
