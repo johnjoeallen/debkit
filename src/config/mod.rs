@@ -8,7 +8,7 @@ use serde_yaml_ng::Value;
 
 use schema::DebkitConfigFile;
 pub use schema::{
-    DEFAULT_ESSENTIAL_PACKAGES, DebkitConfig, EssentialsConfig, GitConfig, NisConfig,
+    DEFAULT_ESSENTIAL_PACKAGES, DebkitConfig, EssentialsConfig, GitConfig, LinkEntry, NisConfig,
     SudoNopassConfig, WakeOnLanConfig,
 };
 

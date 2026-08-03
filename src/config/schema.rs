@@ -47,6 +47,7 @@ pub struct DebkitConfig {
     pub git: GitConfig,
     pub apt: AptConfig,
     pub pam: PamConfig,
+    pub network_interfaces: NetworkInterfacesConfig,
 }
 
 impl DebkitConfig {
@@ -449,6 +450,24 @@ impl Default for PamConfig {
             umask: default_pam_umask(),
         }
     }
+}
+
+/// One MAC -> stable-name declaration, rendered as a systemd `.link` file. This is
+/// deliberately narrower than the doc's full `network.interfaces` example (which also
+/// covers per-interface addresses/forwarding/manager selection) — those require choosing
+/// and configuring a network manager, real Phase-2-shaped complexity. Naming is
+/// self-contained: systemd-udevd applies it independent of which manager configures the
+/// interface afterward, and it only takes effect on next boot/udev reload, never live.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkEntry {
+    pub mac: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NetworkInterfacesConfig {
+    pub links: Vec<LinkEntry>,
 }
 
 #[cfg(test)]

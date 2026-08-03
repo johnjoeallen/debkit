@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,14 +7,20 @@ use crate::engine::evidence::VerificationResult;
 use crate::engine::exec;
 use crate::engine::module::{Context, Diagnosis, Module, Observation};
 use crate::engine::ownership::{OwnerProbe, detect_owner};
-use crate::engine::plan::ChangePlan;
+use crate::engine::plan::{Change, ChangePlan, Risk};
 
-/// Read-only for now: interface inventory, active network-manager ownership, forwarding,
-/// and rp_filter. There is no declared desired state yet (no config section) — stable
-/// MAC-based naming and role-based WAN/LAN configuration (the doc's `network.interfaces`
-/// write path) is deferred to a later phase. This module's whole value right now is
-/// answering "who owns networking on this host" and catching the classic conflict where
-/// more than one manager is fighting over the same interfaces.
+const LINK_DIR: &str = "/etc/systemd/network";
+
+/// Mostly read-only: interface inventory, active network-manager ownership, forwarding,
+/// and rp_filter. The one declared-state piece is stable MAC-based interface naming via
+/// systemd `.link` files (`network_interfaces.links` in config) — self-contained because
+/// systemd-udevd applies it independent of which manager configures the interface
+/// afterward, and it only takes effect on next boot/udev reload, never live. Full
+/// role-based WAN/LAN configuration (addresses, forwarding, manager selection per
+/// interface) is deferred to a later phase — that requires choosing/switching network
+/// managers, real Phase-2-shaped complexity. This module's other job is answering "who
+/// owns networking on this host" and catching the classic conflict where more than one
+/// manager is fighting over the same interfaces.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct InterfaceInfo {
     name: String,
@@ -22,6 +28,18 @@ struct InterfaceInfo {
     mac_address: Option<String>,
     operstate: String,
     addresses: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LinkState {
+    mac: String,
+    name: String,
+    path: String,
+    current_content: Option<String>,
+    desired_content: String,
+    /// Whether an interface named `name` currently exists — i.e. whether the rename has
+    /// already taken effect, or is still pending a reboot/udev reload.
+    already_renamed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +52,7 @@ struct NetworkInterfacesObservation {
     rp_filter_all: Option<String>,
     rp_filter_default: Option<String>,
     interfaces: Vec<InterfaceInfo>,
+    links: Vec<LinkState>,
 }
 
 pub struct NetworkInterfaces;
@@ -43,7 +62,7 @@ impl Module for NetworkInterfaces {
         "network.interfaces"
     }
 
-    fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
+    fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let network_manager_active = exec::systemctl_is_active("NetworkManager");
         let networkd_active = exec::systemctl_is_active("systemd-networkd");
         let ifupdown_active = ifupdown_has_configured_interfaces();
@@ -57,6 +76,14 @@ impl Module for NetworkInterfaces {
             None,
         );
 
+        let links = ctx
+            .config
+            .network_interfaces
+            .links
+            .iter()
+            .map(read_link_state)
+            .collect();
+
         let data = NetworkInterfacesObservation {
             active_manager: owner_result.owner().map(str::to_string),
             owner_conflict: match &owner_result {
@@ -69,6 +96,7 @@ impl Module for NetworkInterfaces {
             rp_filter_all: read_trimmed("/proc/sys/net/ipv4/conf/all/rp_filter"),
             rp_filter_default: read_trimmed("/proc/sys/net/ipv4/conf/default/rp_filter"),
             interfaces: read_interfaces(),
+            links,
         };
 
         let mut observation = Observation::new(serde_json::to_value(&data)?);
@@ -78,6 +106,14 @@ impl Module for NetworkInterfaces {
                 "multiple network managers appear active: {}",
                 conflict.join(", ")
             ));
+        }
+        for link in &data.links {
+            if link.current_content.is_none() {
+                observation = observation.with_warning(format!(
+                    "renaming to `{}` is declared but not yet applied — takes effect on next boot/udev reload",
+                    link.name
+                ));
+            }
         }
         Ok(observation)
     }
@@ -94,23 +130,51 @@ impl Module for NetworkInterfaces {
             };
 
         if let Some(conflict) = data.owner_conflict {
-            Diagnosis::conflict(conflict)
-        } else {
+            return Diagnosis::conflict(conflict);
+        }
+
+        let findings: Vec<String> = data
+            .links
+            .iter()
+            .filter(|link| link.current_content.as_deref() != Some(link.desired_content.as_str()))
+            .map(|link| format!("{} does not match declared name `{}`", link.path, link.name))
+            .collect();
+
+        if findings.is_empty() {
             Diagnosis::compliant()
+        } else {
+            Diagnosis::mismatch(findings)
         }
     }
 
     fn plan(
         &self,
         _ctx: &Context,
-        _observation: &Observation,
-        _diagnosis: &Diagnosis,
+        observation: &Observation,
+        diagnosis: &Diagnosis,
     ) -> anyhow::Result<ChangePlan> {
-        // No declared desired state yet — see module doc comment.
-        Ok(ChangePlan::new())
+        let mut plan = ChangePlan::new();
+        if diagnosis.compliant {
+            return Ok(plan);
+        }
+
+        let data: NetworkInterfacesObservation = serde_json::from_value(observation.data.clone())?;
+        for link in &data.links {
+            if link.current_content.as_deref() != Some(link.desired_content.as_str()) {
+                plan.push(
+                    format!("rename `{}` to `{}` on next boot", link.mac, link.name),
+                    Risk::Medium,
+                    Change::WriteFile {
+                        path: PathBuf::from(&link.path),
+                        content: link.desired_content.clone(),
+                    },
+                );
+            }
+        }
+        Ok(plan)
     }
 
-    fn verify(&self, _ctx: &Context) -> anyhow::Result<Vec<VerificationResult>> {
+    fn verify(&self, ctx: &Context) -> anyhow::Result<Vec<VerificationResult>> {
         let mut checks = Vec::new();
 
         match default_route_interface() {
@@ -136,7 +200,41 @@ impl Module for NetworkInterfaces {
             ));
         }
 
+        for entry in &ctx.config.network_interfaces.links {
+            let check_name = format!("interface at `{}` is named `{}`", entry.mac, entry.name);
+            if Path::new("/sys/class/net").join(&entry.name).exists() {
+                checks.push(VerificationResult::pass(check_name));
+            } else {
+                checks.push(VerificationResult::skipped(
+                    check_name,
+                    "not yet renamed — takes effect on next boot/udev reload",
+                ));
+            }
+        }
+
         Ok(checks)
+    }
+}
+
+fn link_path(name: &str) -> String {
+    format!("{LINK_DIR}/10-debkit-{name}.link")
+}
+
+fn desired_link_content(mac: &str, name: &str) -> String {
+    format!("# Managed by DebKit.\n[Match]\nMACAddress={mac}\n\n[Link]\nName={name}\n")
+}
+
+fn read_link_state(entry: &crate::config::LinkEntry) -> LinkState {
+    let path = link_path(&entry.name);
+    let current_content = fs::read_to_string(&path).ok();
+    let already_renamed = Path::new("/sys/class/net").join(&entry.name).exists();
+    LinkState {
+        mac: entry.mac.clone(),
+        name: entry.name.clone(),
+        path,
+        current_content,
+        desired_content: desired_link_content(&entry.mac, &entry.name),
+        already_renamed,
     }
 }
 
@@ -246,6 +344,7 @@ mod tests {
             rp_filter_all: Some("2".to_string()),
             rp_filter_default: Some("2".to_string()),
             interfaces: Vec::new(),
+            links: Vec::new(),
         };
         let config = config();
         let ctx = Context {
@@ -275,6 +374,7 @@ mod tests {
             rp_filter_all: None,
             rp_filter_default: None,
             interfaces: Vec::new(),
+            links: Vec::new(),
         };
         let config = config();
         let ctx = Context {
@@ -284,7 +384,8 @@ mod tests {
         let observation = Observation::new(serde_json::to_value(&data).unwrap());
         let diagnosis = NetworkInterfaces.diagnose(&ctx, &observation);
         assert!(diagnosis.conflict.is_some());
-        // Still no plan: this module never touches the system yet.
+        // No links configured in this fixture, so still nothing to plan — but plan()
+        // itself is no longer a permanent no-op now that link renaming exists.
         let plan = NetworkInterfaces
             .plan(&ctx, &observation, &diagnosis)
             .unwrap();
@@ -299,5 +400,84 @@ mod tests {
                 .map(str::trim)
                 .any(|line| line.starts_with("iface") && !line.contains(" lo "))
         );
+    }
+
+    fn compliant_link_state() -> LinkState {
+        let mac = "00:11:22:33:44:55".to_string();
+        let name = "lan0".to_string();
+        LinkState {
+            path: link_path(&name),
+            desired_content: desired_link_content(&mac, &name),
+            current_content: Some(desired_link_content(&mac, &name)),
+            mac,
+            name,
+            already_renamed: false,
+        }
+    }
+
+    fn base_link_data(links: Vec<LinkState>) -> NetworkInterfacesObservation {
+        NetworkInterfacesObservation {
+            active_manager: Some("systemd-networkd".to_string()),
+            owner_conflict: None,
+            default_route_interface: Some("lan0".to_string()),
+            ip_forward_v4: false,
+            ip_forward_v6: false,
+            rp_filter_all: None,
+            rp_filter_default: None,
+            interfaces: Vec::new(),
+            links,
+        }
+    }
+
+    #[test]
+    fn desired_link_content_matches_systemd_link_format() {
+        let content = desired_link_content("00:11:22:33:44:55", "lan0");
+        assert!(content.contains("[Match]\nMACAddress=00:11:22:33:44:55"));
+        assert!(content.contains("[Link]\nName=lan0"));
+    }
+
+    #[test]
+    fn compliant_when_link_file_already_matches() {
+        let data = base_link_data(vec![compliant_link_state()]);
+        let config = config();
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let observation = Observation::new(serde_json::to_value(&data).unwrap());
+        let diagnosis = NetworkInterfaces.diagnose(&ctx, &observation);
+        assert!(diagnosis.compliant);
+        let plan = NetworkInterfaces
+            .plan(&ctx, &observation, &diagnosis)
+            .unwrap();
+        assert!(plan.is_empty());
+    }
+
+    #[test]
+    fn missing_link_file_produces_write_change() {
+        let mut link = compliant_link_state();
+        link.current_content = None;
+        let data = base_link_data(vec![link]);
+        let config = config();
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let observation = Observation::new(serde_json::to_value(&data).unwrap());
+        let diagnosis = NetworkInterfaces.diagnose(&ctx, &observation);
+        assert!(!diagnosis.compliant);
+        let plan = NetworkInterfaces
+            .plan(&ctx, &observation, &diagnosis)
+            .unwrap();
+        assert_eq!(plan.changes.len(), 1);
+        match &plan.changes[0].change {
+            Change::WriteFile { path, .. } => {
+                assert_eq!(
+                    path,
+                    &PathBuf::from("/etc/systemd/network/10-debkit-lan0.link")
+                );
+            }
+            other => panic!("expected WriteFile, got {other:?}"),
+        }
     }
 }
