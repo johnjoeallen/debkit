@@ -52,6 +52,7 @@ pub struct DebkitConfig {
     pub dns: DnsConfig,
     pub hardware_reboot: HardwareRebootConfig,
     pub hardware_sleep: HardwareSleepConfig,
+    pub hardware_rgb: HardwareRgbConfig,
 }
 
 impl DebkitConfig {
@@ -525,6 +526,16 @@ pub struct HardwareSleepConfig {
     /// parameter is also set — that's a bootloader edit, a different risk profile from
     /// a live sysfs write, and out of scope here.
     pub desired_mem_sleep: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HardwareRgbConfig {
+    /// When true, DebKit ensures the `i2c-dev` kernel module is loaded now and on every
+    /// future boot — the standard prerequisite for OpenRGB (or any other tool) to see a
+    /// motherboard's SMBus-based RGB controller via `/dev/i2c-*`. Nothing about specific
+    /// devices, colors, or lighting profiles is managed; see modules::hardware_rgb.
+    pub enabled: bool,
 }
 
 #[cfg(test)]
