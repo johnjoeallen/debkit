@@ -8,8 +8,8 @@ use serde_yaml_ng::Value;
 
 use schema::DebkitConfigFile;
 pub use schema::{
-    DEFAULT_ESSENTIAL_PACKAGES, DebkitConfig, EssentialsConfig, GitConfig, LinkEntry, NisConfig,
-    SudoNopassConfig, WakeOnLanConfig,
+    DEFAULT_ESSENTIAL_PACKAGES, DebkitConfig, DnsConfig, EssentialsConfig, GitConfig, LinkEntry,
+    NisConfig, SudoNopassConfig, WakeOnLanConfig,
 };
 
 pub fn load_or_init() -> anyhow::Result<DebkitConfig> {

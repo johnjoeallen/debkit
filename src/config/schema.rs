@@ -49,6 +49,7 @@ pub struct DebkitConfig {
     pub pam: PamConfig,
     pub network_interfaces: NetworkInterfacesConfig,
     pub tailscale: TailscaleConfig,
+    pub dns: DnsConfig,
 }
 
 impl DebkitConfig {
@@ -479,6 +480,23 @@ pub struct TailscaleConfig {
     /// modules::network_tailscale for why this isn't auto-enforced).
     pub magic_dns_off_lan: bool,
     pub preserve_lan_dns: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DnsConfig {
+    pub enabled: bool,
+    /// Only `"dnsmasq"` is declaratively managed today; other values (or empty) mean
+    /// "diagnose only, don't touch anything" — see modules::network_dns.
+    pub provider: String,
+    /// Rendered as `local=/<domain>/` + `domain=<domain>` — an authoritative local zone,
+    /// per the doc's "declare the local zone explicitly" fix.
+    pub local_domains: Vec<String>,
+    /// Rendered as `listen-address=<a>,<b>,...`.
+    pub listen: Vec<String>,
+    /// e.g. `"127.0.0.1:5053"` for a local dnscrypt-proxy/similar. Empty means none
+    /// declared. Rendered as `server=<address>`.
+    pub encrypted_upstream_address: String,
 }
 
 #[cfg(test)]
