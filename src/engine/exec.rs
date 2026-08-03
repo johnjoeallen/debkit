@@ -282,6 +282,18 @@ fn package_installed(package: &str) -> anyhow::Result<bool> {
     Ok(status.success())
 }
 
+pub fn systemctl_is_enabled(unit: &str) -> bool {
+    Command::new("systemctl")
+        .arg("is-enabled")
+        .arg("--quiet")
+        .arg(unit)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 pub fn systemctl_is_active(unit: &str) -> bool {
     Command::new("systemctl")
         .arg("is-active")

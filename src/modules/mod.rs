@@ -1,4 +1,5 @@
 pub mod core_inspect;
+pub mod network_wake_on_lan;
 
 use crate::engine::module::Module;
 
@@ -6,7 +7,10 @@ use crate::engine::module::Module;
 /// lifecycle commands. Toolchain installers (rust, npm, essentials, ...) stay under
 /// `install/` and are not registered here — they don't need ownership/plan machinery.
 pub fn registry() -> Vec<Box<dyn Module>> {
-    vec![Box::new(core_inspect::CoreInspect)]
+    vec![
+        Box::new(core_inspect::CoreInspect),
+        Box::new(network_wake_on_lan::NetworkWakeOnLan),
+    ]
 }
 
 pub fn find(name: &str) -> Option<Box<dyn Module>> {

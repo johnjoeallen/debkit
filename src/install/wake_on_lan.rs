@@ -7,35 +7,35 @@ use anyhow::{Context, bail};
 use crate::config::{DebkitConfig, WakeOnLanConfig};
 
 const WAKE_INFO_DIR: &str = "/var/lib/debkit/wake-on-lan";
-const ETHTOOL_SERVICE_PATH: &str = "/etc/systemd/system/debkit-wol@.service";
-const ETHTOOL_SERVICE: &str = "[Unit]\nDescription=Enable Wake-on-LAN for %i\nAfter=network.target\n\n[Service]\nType=oneshot\nExecStart=/usr/sbin/ethtool -s %i wol g\n\n[Install]\nWantedBy=multi-user.target\n";
+pub(crate) const ETHTOOL_SERVICE_PATH: &str = "/etc/systemd/system/debkit-wol@.service";
+pub(crate) const ETHTOOL_SERVICE: &str = "[Unit]\nDescription=Enable Wake-on-LAN for %i\nAfter=network.target\n\n[Service]\nType=oneshot\nExecStart=/usr/sbin/ethtool -s %i wol g\n\n[Install]\nWantedBy=multi-user.target\n";
 
 #[derive(Debug, Clone)]
-struct HostReport {
-    hostname: String,
-    os_version: String,
-    network_manager_installed: bool,
-    network_manager_running: bool,
-    default_route_interface: Option<String>,
-    ethtool_installed: bool,
-    wakeonlan_installed: bool,
-    etherwake_installed: bool,
-    interfaces: Vec<InterfaceReport>,
-    warnings: Vec<String>,
+pub(crate) struct HostReport {
+    pub(crate) hostname: String,
+    pub(crate) os_version: String,
+    pub(crate) network_manager_installed: bool,
+    pub(crate) network_manager_running: bool,
+    pub(crate) default_route_interface: Option<String>,
+    pub(crate) ethtool_installed: bool,
+    pub(crate) wakeonlan_installed: bool,
+    pub(crate) etherwake_installed: bool,
+    pub(crate) interfaces: Vec<InterfaceReport>,
+    pub(crate) warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct InterfaceReport {
-    name: String,
-    kind: InterfaceKind,
-    mac_address: Option<String>,
-    permanent_mac_address: Option<String>,
-    supports_wake_on: Option<String>,
-    ethtool_wake_on: Option<String>,
-    link_detected: Option<String>,
-    nm_managed: bool,
-    nm_connection: Option<String>,
-    nm_wake_on_lan: Option<String>,
+pub(crate) struct InterfaceReport {
+    pub(crate) name: String,
+    pub(crate) kind: InterfaceKind,
+    pub(crate) mac_address: Option<String>,
+    pub(crate) permanent_mac_address: Option<String>,
+    pub(crate) supports_wake_on: Option<String>,
+    pub(crate) ethtool_wake_on: Option<String>,
+    pub(crate) link_detected: Option<String>,
+    pub(crate) nm_managed: bool,
+    pub(crate) nm_connection: Option<String>,
+    pub(crate) nm_wake_on_lan: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,21 +55,21 @@ struct WakeInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InterfaceKind {
+pub(crate) enum InterfaceKind {
     Wired,
     Wireless,
     Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BackendRequest {
+pub(crate) enum BackendRequest {
     NetworkManager,
     Ethtool,
     Auto,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelectedBackend {
+pub(crate) enum SelectedBackend {
     NetworkManager,
     Ethtool,
 }
@@ -166,7 +166,7 @@ pub fn print_status(config: &DebkitConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn collect_report(config: &DebkitConfig) -> anyhow::Result<HostReport> {
+pub(crate) fn collect_report(config: &DebkitConfig) -> anyhow::Result<HostReport> {
     let hostname = capture("hostname", &[])
         .unwrap_or_else(|_| "unknown".to_string())
         .trim()
@@ -261,7 +261,7 @@ fn collect_interfaces(
     Ok(interfaces)
 }
 
-fn selected_interfaces(
+pub(crate) fn selected_interfaces(
     report: &HostReport,
     config: &WakeOnLanConfig,
 ) -> anyhow::Result<Vec<String>> {
@@ -301,7 +301,7 @@ fn selected_interfaces(
     }
 }
 
-fn ensure_wired_target(report: &HostReport, iface: &str) -> anyhow::Result<()> {
+pub(crate) fn ensure_wired_target(report: &HostReport, iface: &str) -> anyhow::Result<()> {
     let Some(found) = report.interfaces.iter().find(|item| item.name == iface) else {
         bail!("configured Wake-on-LAN interface `{iface}` was not found");
     };
@@ -314,7 +314,7 @@ fn ensure_wired_target(report: &HostReport, iface: &str) -> anyhow::Result<()> {
     }
 }
 
-fn select_backend(
+pub(crate) fn select_backend(
     report: &HostReport,
     interfaces: &[String],
     request: BackendRequest,
@@ -332,7 +332,7 @@ fn select_backend(
     }
 }
 
-fn can_use_network_manager(report: &HostReport, interfaces: &[String]) -> bool {
+pub(crate) fn can_use_network_manager(report: &HostReport, interfaces: &[String]) -> bool {
     report.network_manager_installed
         && report.network_manager_running
         && interfaces.iter().all(|name| {
@@ -698,7 +698,7 @@ fn backend_warnings(report: &HostReport, backend: SelectedBackend) -> Vec<String
     }
 }
 
-fn interface_by_name<'a>(
+pub(crate) fn interface_by_name<'a>(
     report: &'a HostReport,
     name: &str,
 ) -> anyhow::Result<&'a InterfaceReport> {
@@ -709,7 +709,7 @@ fn interface_by_name<'a>(
         .with_context(|| format!("interface `{name}` was not found"))
 }
 
-fn parse_backend(raw: &str) -> anyhow::Result<BackendRequest> {
+pub(crate) fn parse_backend(raw: &str) -> anyhow::Result<BackendRequest> {
     match raw {
         "network_manager" | "networkmanager" => Ok(BackendRequest::NetworkManager),
         "ethtool" => Ok(BackendRequest::Ethtool),
@@ -994,7 +994,7 @@ fn yes_no(value: bool) -> &'static str {
 }
 
 impl BackendRequest {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::NetworkManager => "network_manager",
             Self::Ethtool => "ethtool",
@@ -1004,7 +1004,7 @@ impl BackendRequest {
 }
 
 impl SelectedBackend {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::NetworkManager => "network_manager",
             Self::Ethtool => "ethtool",
@@ -1013,7 +1013,7 @@ impl SelectedBackend {
 }
 
 impl InterfaceKind {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Wired => "wired",
             Self::Wireless => "wireless",
