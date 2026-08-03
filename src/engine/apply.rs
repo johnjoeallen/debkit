@@ -191,6 +191,40 @@ pub fn read_journal(path: &Path) -> anyhow::Result<AppliedPlan> {
     serde_json::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))
 }
 
+/// Finds the most recently written journal entry for `module` on `host`, for
+/// `debkit rollback <module>` without requiring the caller to know the exact filename
+/// `apply` printed.
+pub fn find_latest_journal(module: &str, host: &str) -> anyhow::Result<Option<PathBuf>> {
+    let dir = journal_dir();
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let prefix = format!("{host}-{}-", module_dir_name(module));
+    let mut candidates: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(&dir).with_context(|| format!("failed to read {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("failed to read {}", dir.display()))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(timestamp) = journal_timestamp(&prefix, &name) {
+            candidates.push((timestamp, entry.path()));
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .max_by_key(|(timestamp, _)| *timestamp)
+        .map(|(_, path)| path))
+}
+
+/// Parses the timestamp out of a journal filename matching `<prefix><timestamp>.json`,
+/// pulled out of `find_latest_journal` so the parsing logic is testable without touching
+/// the filesystem or `DEBKIT_STATE_DIR`.
+fn journal_timestamp(prefix: &str, filename: &str) -> Option<u64> {
+    filename
+        .strip_prefix(prefix)?
+        .strip_suffix(".json")?
+        .parse::<u64>()
+        .ok()
+}
+
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -202,6 +236,23 @@ fn now_unix() -> u64 {
 mod tests {
     use super::*;
     use crate::engine::plan::Risk;
+
+    #[test]
+    fn journal_timestamp_parses_matching_filenames() {
+        let prefix = "spitfire-network-wake_on_lan-";
+        assert_eq!(
+            journal_timestamp(prefix, "spitfire-network-wake_on_lan-100.json"),
+            Some(100)
+        );
+        assert_eq!(
+            journal_timestamp(prefix, "spitfire-identity-nis-100.json"),
+            None
+        );
+        assert_eq!(
+            journal_timestamp(prefix, "spitfire-network-wake_on_lan-notanumber.json"),
+            None
+        );
+    }
 
     #[test]
     fn journal_path_is_stable_and_filesystem_safe() {

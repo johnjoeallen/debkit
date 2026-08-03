@@ -44,6 +44,8 @@ enum Commands {
     Apply(ModuleArgs),
     #[command(about = "Run a module's functional verification checks")]
     Verify(ModuleArgs),
+    #[command(about = "Reverse a module's most recent applied change plan")]
+    Rollback(RollbackArgs),
 }
 
 #[derive(Debug, Args)]
@@ -53,6 +55,16 @@ struct ModuleArgs {
 
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RollbackArgs {
+    /// Dotted module name whose most recent applied plan should be reversed.
+    module: String,
+
+    /// Roll back a specific journal file instead of the most recent one.
+    #[arg(long)]
+    journal: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -344,6 +356,7 @@ fn run() -> anyhow::Result<()> {
         Commands::Plan(args) => run_plan(&args)?,
         Commands::Apply(args) => run_apply(&args)?,
         Commands::Verify(args) => run_verify(&args)?,
+        Commands::Rollback(args) => run_rollback(&args)?,
     }
 
     Ok(())
@@ -531,6 +544,30 @@ fn run_verify(args: &ModuleArgs) -> anyhow::Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+fn run_rollback(args: &RollbackArgs) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let hostname = config.host.name.clone();
+
+    let journal_path = match &args.journal {
+        Some(path) => path.clone(),
+        None => engine::apply::find_latest_journal(&args.module, &hostname)?.with_context(|| {
+            format!(
+                "no rollback journal found for `{}` on `{hostname}`; pass --journal <path> if it was written elsewhere",
+                args.module
+            )
+        })?,
+    };
+
+    let applied = engine::apply::read_journal(&journal_path)?;
+    engine::apply::rollback(&applied)?;
+    println!(
+        "rolled back {} change(s) from {}",
+        applied.entries.len(),
+        journal_path.display()
+    );
     Ok(())
 }
 
@@ -883,6 +920,31 @@ mod tests {
                 .command,
             Commands::Verify(ModuleArgs {
                 module: Some(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_rollback_with_and_without_journal() {
+        let cli = Cli::try_parse_from(["debkit", "rollback", "identity.nis"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Rollback(RollbackArgs { module, journal: None }) if module == "identity.nis"
+        ));
+
+        let cli = Cli::try_parse_from([
+            "debkit",
+            "rollback",
+            "identity.nis",
+            "--journal",
+            "/var/lib/debkit/journal/spitfire-identity-nis-100.json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Rollback(RollbackArgs {
+                journal: Some(_),
                 ..
             })
         ));
