@@ -1,4 +1,5 @@
 pub mod core_inspect;
+pub mod identity_nis;
 pub mod network_wake_on_lan;
 
 use crate::engine::module::Module;
@@ -10,6 +11,7 @@ pub fn registry() -> Vec<Box<dyn Module>> {
     vec![
         Box::new(core_inspect::CoreInspect),
         Box::new(network_wake_on_lan::NetworkWakeOnLan),
+        Box::new(identity_nis::IdentityNis),
     ]
 }
 

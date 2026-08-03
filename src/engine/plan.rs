@@ -51,6 +51,12 @@ pub enum Change {
         unit: String,
         action: ServiceActionKind,
     },
+    /// `apt-get update` + `apt-get install -y <packages>`, run non-interactively, with
+    /// each package's installed state verified afterward — the generic form of what
+    /// every module that needs a package currently hand-rolls.
+    InstallPackages {
+        packages: Vec<String>,
+    },
 }
 
 /// One planned change plus the human-facing description and risk shown in dry-run output.
@@ -109,6 +115,9 @@ impl ChangePlan {
                         action.as_str(),
                         unit
                     ));
+                }
+                Change::InstallPackages { packages } => {
+                    out.push_str(&format!("    install: {}\n", packages.join(" ")));
                 }
             }
         }

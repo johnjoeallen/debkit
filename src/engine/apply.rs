@@ -110,6 +110,16 @@ fn apply_change(change: &Change) -> anyhow::Result<UndoAction> {
                 ),
             })
         }
+        Change::InstallPackages { packages } => {
+            let package_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+            exec::apt_update_install(&package_refs)?;
+            Ok(UndoAction::Manual {
+                note: format!(
+                    "installing `{}` is not automatically reversible",
+                    packages.join(", ")
+                ),
+            })
+        }
     }
 }
 
