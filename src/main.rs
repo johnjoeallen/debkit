@@ -6,7 +6,7 @@ mod package;
 
 use std::path::PathBuf;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use clap::{Args, Parser, Subcommand};
 
 use engine::module::{Context as ModuleContext, Module};
@@ -153,7 +153,11 @@ enum UninstallSubcommand {
 #[derive(Debug, Args)]
 struct StatusCommand {
     #[command(subcommand)]
-    command: StatusSubcommand,
+    command: Option<StatusSubcommand>,
+
+    /// Dotted module name for the new lifecycle-based modules, e.g. `core.inspect`.
+    /// Ignored when a legacy subcommand above matched.
+    module: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -342,14 +346,22 @@ fn run() -> anyhow::Result<()> {
             }
         },
         Commands::Status(status) => match status.command {
-            StatusSubcommand::Variety => {
+            Some(StatusSubcommand::Variety) => {
                 let config = config::load_or_init()?;
                 install::variety::print_status(&config)?;
             }
-            StatusSubcommand::WakeOnLan => {
+            Some(StatusSubcommand::WakeOnLan) => {
                 let config = config::load_or_init()?;
                 install::wake_on_lan::print_status(&config)?;
             }
+            None => match status.module {
+                Some(module) => run_status(&module)?,
+                None => {
+                    bail!(
+                        "specify a target: `debkit status variety`, `debkit status wake-on-lan`, or a module name like `debkit status core.inspect`"
+                    );
+                }
+            },
         },
         Commands::Inspect(args) => run_inspect(&args)?,
         Commands::Diagnose(args) => run_diagnose(&args)?,
@@ -422,6 +434,39 @@ fn run_diagnose(args: &ModuleArgs) -> anyhow::Result<()> {
         for finding in &diagnosis.findings {
             println!("- {finding}");
         }
+    }
+    Ok(())
+}
+
+/// `debkit status <module>` — the `Module`-based counterpart to the legacy
+/// `status variety`/`status wake-on-lan` subcommands: discover()+diagnose(), rendered
+/// for humans, on a single named module.
+fn run_status(module_name: &str) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let ctx = ModuleContext {
+        hostname: config.host.name.clone(),
+        config: &config,
+    };
+    let module = modules::find(module_name)
+        .with_context(|| format!("unknown module `{module_name}` (see `debkit list`)"))?;
+
+    let observation = module.discover(&ctx)?;
+    let diagnosis = module.diagnose(&ctx, &observation);
+
+    println!("== {} ==", module.name());
+    println!("owner: {}", observation.owner.as_deref().unwrap_or("none"));
+    println!(
+        "compliant: {}",
+        if diagnosis.compliant { "yes" } else { "no" }
+    );
+    if let Some(conflict) = &diagnosis.conflict {
+        println!("conflict: {}", conflict.join(", "));
+    }
+    for finding in &diagnosis.findings {
+        println!("- {finding}");
+    }
+    for warning in &observation.warnings {
+        println!("warning: {warning}");
     }
     Ok(())
 }
@@ -848,7 +893,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Commands::Status(StatusCommand {
-                command: StatusSubcommand::Variety
+                command: Some(StatusSubcommand::Variety),
+                ..
             })
         ));
     }
@@ -859,8 +905,21 @@ mod tests {
         assert!(matches!(
             cli.command,
             Commands::Status(StatusCommand {
-                command: StatusSubcommand::WakeOnLan
+                command: Some(StatusSubcommand::WakeOnLan),
+                ..
             })
+        ));
+    }
+
+    #[test]
+    fn parses_status_module_name() {
+        let cli = Cli::try_parse_from(["debkit", "status", "core.inspect"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Status(StatusCommand {
+                command: None,
+                module: Some(module),
+            }) if module == "core.inspect"
         ));
     }
 
