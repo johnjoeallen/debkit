@@ -143,13 +143,12 @@ fn read_failed_units() -> Vec<String> {
 fn read_watched_package_versions() -> BTreeMap<String, String> {
     let mut packages = BTreeMap::new();
     for package in WATCHED_PACKAGES {
-        if let Ok(raw) = exec::capture("dpkg-query", &["-W", "-f=${Status} ${Version}", package]) {
-            let raw = raw.trim();
-            if let Some((status, version)) = raw.split_once(' ') {
-                if status.trim_end().ends_with("installed") && !version.trim().is_empty() {
-                    packages.insert((*package).to_string(), version.trim().to_string());
-                }
-            }
+        if let Ok(raw) = exec::capture("dpkg-query", &["-W", "-f=${Status} ${Version}", package])
+            && let Some((status, version)) = raw.trim().split_once(' ')
+            && status.trim_end().ends_with("installed")
+            && !version.trim().is_empty()
+        {
+            packages.insert((*package).to_string(), version.trim().to_string());
         }
     }
     packages
