@@ -48,6 +48,7 @@ pub struct DebkitConfig {
     pub apt: AptConfig,
     pub pam: PamConfig,
     pub network_interfaces: NetworkInterfacesConfig,
+    pub tailscale: TailscaleConfig,
 }
 
 impl DebkitConfig {
@@ -468,6 +469,16 @@ pub struct LinkEntry {
 #[serde(default)]
 pub struct NetworkInterfacesConfig {
     pub links: Vec<LinkEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TailscaleConfig {
+    pub enabled: bool,
+    /// Whether MagicDNS is expected to behave differently off-LAN (informational — see
+    /// modules::network_tailscale for why this isn't auto-enforced).
+    pub magic_dns_off_lan: bool,
+    pub preserve_lan_dns: bool,
 }
 
 #[cfg(test)]
