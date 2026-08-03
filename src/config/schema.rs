@@ -46,6 +46,7 @@ pub struct DebkitConfig {
     pub wake_on_lan: WakeOnLanConfig,
     pub git: GitConfig,
     pub apt: AptConfig,
+    pub pam: PamConfig,
 }
 
 impl DebkitConfig {
@@ -410,6 +411,44 @@ pub struct AptConfig {
     pub proxy: String,
     /// Hosts that should bypass `proxy` via a per-host `DIRECT` override.
     pub direct_hosts: Vec<String>,
+}
+
+pub const DEFAULT_PAM_SKELETON: &str = "/etc/skel";
+pub const DEFAULT_PAM_UMASK: &str = "0022";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PamConfig {
+    pub create_home_on_first_login: bool,
+    #[serde(default = "default_pam_services")]
+    pub services: Vec<String>,
+    #[serde(default = "default_pam_skeleton")]
+    pub skeleton: String,
+    #[serde(default = "default_pam_umask")]
+    pub umask: String,
+}
+
+fn default_pam_services() -> Vec<String> {
+    vec!["login".to_string(), "sshd".to_string()]
+}
+
+fn default_pam_skeleton() -> String {
+    DEFAULT_PAM_SKELETON.to_string()
+}
+
+fn default_pam_umask() -> String {
+    DEFAULT_PAM_UMASK.to_string()
+}
+
+impl Default for PamConfig {
+    fn default() -> Self {
+        Self {
+            create_home_on_first_login: false,
+            services: default_pam_services(),
+            skeleton: default_pam_skeleton(),
+            umask: default_pam_umask(),
+        }
+    }
 }
 
 #[cfg(test)]

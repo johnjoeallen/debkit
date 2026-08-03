@@ -2,6 +2,8 @@ pub mod apt_repositories;
 pub mod core_inspect;
 pub mod developer_git;
 pub mod identity_nis;
+pub mod identity_nss;
+pub mod identity_pam;
 pub mod identity_sudo;
 pub mod network_interfaces;
 pub mod network_wake_on_lan;
@@ -18,6 +20,8 @@ pub fn registry() -> Vec<Box<dyn Module>> {
         Box::new(network_interfaces::NetworkInterfaces),
         Box::new(network_wake_on_lan::NetworkWakeOnLan),
         Box::new(identity_nis::IdentityNis),
+        Box::new(identity_nss::IdentityNss),
+        Box::new(identity_pam::IdentityPam),
         Box::new(identity_sudo::IdentitySudo),
         Box::new(systemd_units::SystemdUnits),
         Box::new(developer_git::DeveloperGit),
