@@ -52,6 +52,25 @@ pub fn run_privileged(program: &str, args: &[&str]) -> anyhow::Result<()> {
     run_privileged_with_input(program, args, "")
 }
 
+/// Runs `program` directly as the invoking user — never through `sudo`. Required for
+/// per-user state (`git config --global`, files under the invoking user's `$HOME`) where
+/// running as root would silently operate on the wrong home directory.
+pub fn run_as_current_user(program: &str, args: &[&str]) -> anyhow::Result<()> {
+    let status = Command::new(program)
+        .args(args)
+        .status()
+        .with_context(|| format!("failed to launch {program}"))?;
+    if !status.success() {
+        bail!(
+            "{} {} failed with status {}",
+            program,
+            args.join(" "),
+            status
+        );
+    }
+    Ok(())
+}
+
 pub fn run_privileged_with_input(program: &str, args: &[&str], stdin: &str) -> anyhow::Result<()> {
     let euid = current_euid()?;
 

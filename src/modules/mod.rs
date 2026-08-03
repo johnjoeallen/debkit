@@ -1,4 +1,5 @@
 pub mod core_inspect;
+pub mod developer_git;
 pub mod identity_nis;
 pub mod network_wake_on_lan;
 pub mod systemd_units;
@@ -14,6 +15,7 @@ pub fn registry() -> Vec<Box<dyn Module>> {
         Box::new(network_wake_on_lan::NetworkWakeOnLan),
         Box::new(identity_nis::IdentityNis),
         Box::new(systemd_units::SystemdUnits),
+        Box::new(developer_git::DeveloperGit),
     ]
 }
 

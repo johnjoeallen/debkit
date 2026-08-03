@@ -30,6 +30,7 @@ pub const DEFAULT_WOL_BACKEND: &str = "network_manager";
 pub const DEFAULT_HOST_NAME: &str = "unknown";
 pub const DEFAULT_NIS_ROLE: &str = "slave";
 pub const DEFAULT_SUDO_NOPASS_GROUP: &str = "superuser";
+pub const DEFAULT_GIT_CREDENTIAL_HELPER: &str = "store";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -43,6 +44,7 @@ pub struct DebkitConfig {
     pub sudo_nopass: SudoNopassConfig,
     pub nis: NisConfig,
     pub wake_on_lan: WakeOnLanConfig,
+    pub git: GitConfig,
 }
 
 impl DebkitConfig {
@@ -369,6 +371,33 @@ impl Serialize for WakeOnLanConfig {
         S: Serializer,
     {
         WakeOnLanConfigWire::from(self).serialize(serializer)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitConfig {
+    pub enabled: bool,
+    /// `"store"`, `"cache"`, `"none"` (no helper managed), or an explicit
+    /// `credential.helper` command string.
+    #[serde(default = "default_git_credential_helper")]
+    pub credential_helper: String,
+    /// Only consulted when `credential_helper = "store"`. Empty means git's own
+    /// default (`~/.git-credentials`).
+    pub credential_store_file: String,
+}
+
+fn default_git_credential_helper() -> String {
+    DEFAULT_GIT_CREDENTIAL_HELPER.to_string()
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            credential_helper: default_git_credential_helper(),
+            credential_store_file: String::new(),
+        }
     }
 }
 

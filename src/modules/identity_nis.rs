@@ -225,6 +225,7 @@ impl Module for IdentityNis {
                 Change::RunCommand {
                     program: "domainname".to_string(),
                     args: vec![data.domain.clone()],
+                    privileged: true,
                 },
             );
         }

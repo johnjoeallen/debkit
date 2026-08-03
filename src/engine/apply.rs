@@ -88,9 +88,17 @@ fn apply_change(change: &Change) -> anyhow::Result<UndoAction> {
                 previous,
             })
         }
-        Change::RunCommand { program, args } => {
+        Change::RunCommand {
+            program,
+            args,
+            privileged,
+        } => {
             let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            exec::run_privileged(program, &arg_refs)?;
+            if *privileged {
+                exec::run_privileged(program, &arg_refs)?;
+            } else {
+                exec::run_as_current_user(program, &arg_refs)?;
+            }
             Ok(UndoAction::Manual {
                 note: format!(
                     "`{program} {}` is not automatically reversible",

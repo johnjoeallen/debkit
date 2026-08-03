@@ -8,8 +8,8 @@ use serde_yaml_ng::Value;
 
 use schema::DebkitConfigFile;
 pub use schema::{
-    DEFAULT_ESSENTIAL_PACKAGES, DebkitConfig, EssentialsConfig, NisConfig, SudoNopassConfig,
-    WakeOnLanConfig,
+    DEFAULT_ESSENTIAL_PACKAGES, DebkitConfig, EssentialsConfig, GitConfig, NisConfig,
+    SudoNopassConfig, WakeOnLanConfig,
 };
 
 pub fn load_or_init() -> anyhow::Result<DebkitConfig> {
@@ -235,6 +235,9 @@ fn validate_config(config: &DebkitConfig) -> anyhow::Result<()> {
         "auto" | "network_manager" | "networkmanager" | "ethtool"
     ) {
         bail!("`wake_on_lan.backend` must be one of `network_manager`, `ethtool`, or `auto`");
+    }
+    if config.git.enabled && config.git.credential_helper.trim().is_empty() {
+        bail!("`git.credential_helper` must not be empty when `git.enabled = true`");
     }
     Ok(())
 }

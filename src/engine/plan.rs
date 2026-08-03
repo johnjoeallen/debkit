@@ -46,6 +46,10 @@ pub enum Change {
     RunCommand {
         program: String,
         args: Vec<String>,
+        /// Most system mutations need root (sudo). Per-user state — `git config
+        /// --global`, files under the invoking user's `$HOME` — must run as that user
+        /// instead; running it under sudo would silently operate on root's `$HOME`.
+        privileged: bool,
     },
     ServiceAction {
         unit: String,
@@ -106,8 +110,17 @@ impl ChangePlan {
                 Change::WriteFile { path, .. } => {
                     out.push_str(&format!("    write: {}\n", path.display()));
                 }
-                Change::RunCommand { program, args } => {
-                    out.push_str(&format!("    run: {} {}\n", program, args.join(" ")));
+                Change::RunCommand {
+                    program,
+                    args,
+                    privileged,
+                } => {
+                    let prefix = if *privileged { "sudo " } else { "" };
+                    out.push_str(&format!(
+                        "    run: {prefix}{} {}\n",
+                        program,
+                        args.join(" ")
+                    ));
                 }
                 Change::ServiceAction { unit, action } => {
                     out.push_str(&format!(

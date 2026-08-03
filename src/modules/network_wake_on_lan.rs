@@ -206,6 +206,7 @@ impl Module for NetworkWakeOnLan {
                         "802-3-ethernet.wake-on-lan".to_string(),
                         "magic".to_string(),
                     ],
+                    privileged: true,
                 },
             );
         } else {
@@ -223,6 +224,7 @@ impl Module for NetworkWakeOnLan {
                         "wol".to_string(),
                         "g".to_string(),
                     ],
+                    privileged: true,
                 },
             );
             plan.push(
@@ -373,7 +375,7 @@ mod tests {
             .unwrap();
         assert_eq!(plan.changes.len(), 1);
         match &plan.changes[0].change {
-            Change::RunCommand { program, args } => {
+            Change::RunCommand { program, args, .. } => {
                 assert_eq!(program, "nmcli");
                 assert!(args.contains(&"magic".to_string()));
             }
