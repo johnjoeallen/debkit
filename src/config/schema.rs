@@ -50,6 +50,7 @@ pub struct DebkitConfig {
     pub network_interfaces: NetworkInterfacesConfig,
     pub tailscale: TailscaleConfig,
     pub dns: DnsConfig,
+    pub hardware_reboot: HardwareRebootConfig,
 }
 
 impl DebkitConfig {
@@ -497,6 +498,19 @@ pub struct DnsConfig {
     /// e.g. `"127.0.0.1:5053"` for a local dnscrypt-proxy/similar. Empty means none
     /// declared. Rendered as `server=<address>`.
     pub encrypted_upstream_address: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HardwareRebootConfig {
+    pub enabled: bool,
+    /// Declared installed RAM capacity, in GiB, rounded to the nearest common size (8,
+    /// 16, 32, 64, 96, 128, ...). 0 means "not declared, don't check." Compared against
+    /// `/proc/meminfo`'s `MemTotal` (also rounded up to the nearest common capacity, to
+    /// absorb the gap between nominal and OS-visible RAM) — a coarse but root-free,
+    /// no-`dmidecode` signal that catches a DIMM going undetected after a reboot/BIOS
+    /// change, per modules::hardware_reboot.
+    pub expected_memory_gib: u32,
 }
 
 #[cfg(test)]
