@@ -51,6 +51,7 @@ pub struct DebkitConfig {
     pub tailscale: TailscaleConfig,
     pub dns: DnsConfig,
     pub hardware_reboot: HardwareRebootConfig,
+    pub hardware_sleep: HardwareSleepConfig,
 }
 
 impl DebkitConfig {
@@ -511,6 +512,19 @@ pub struct HardwareRebootConfig {
     /// no-`dmidecode` signal that catches a DIMM going undetected after a reboot/BIOS
     /// change, per modules::hardware_reboot.
     pub expected_memory_gib: u32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HardwareSleepConfig {
+    pub enabled: bool,
+    /// Desired `/sys/power/mem_sleep` mode: `"s2idle"`, `"deep"`, or empty (don't
+    /// enforce). Validated in `config::validate_config` since it's embedded directly
+    /// in a shell command by modules::hardware_sleep. Runtime-only: reverts to the
+    /// kernel/firmware default on the next reboot unless a `mem_sleep_default=` kernel
+    /// parameter is also set — that's a bootloader edit, a different risk profile from
+    /// a live sysfs write, and out of scope here.
+    pub desired_mem_sleep: String,
 }
 
 #[cfg(test)]

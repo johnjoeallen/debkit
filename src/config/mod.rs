@@ -239,6 +239,12 @@ fn validate_config(config: &DebkitConfig) -> anyhow::Result<()> {
     if config.git.enabled && config.git.credential_helper.trim().is_empty() {
         bail!("`git.credential_helper` must not be empty when `git.enabled = true`");
     }
+    if !matches!(
+        config.hardware_sleep.desired_mem_sleep.as_str(),
+        "" | "s2idle" | "deep"
+    ) {
+        bail!("`hardware_sleep.desired_mem_sleep` must be one of `s2idle`, `deep`, or empty");
+    }
     Ok(())
 }
 

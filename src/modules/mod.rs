@@ -2,6 +2,7 @@ pub mod apt_repositories;
 pub mod core_inspect;
 pub mod developer_git;
 pub mod hardware_reboot;
+pub mod hardware_sleep;
 pub mod identity_nis;
 pub mod identity_nss;
 pub mod identity_pam;
@@ -36,6 +37,7 @@ pub fn registry() -> Vec<Box<dyn Module>> {
         Box::new(developer_git::DeveloperGit),
         Box::new(apt_repositories::AptRepositories),
         Box::new(hardware_reboot::HardwareReboot),
+        Box::new(hardware_sleep::HardwareSleep),
     ]
 }
 
