@@ -2,6 +2,7 @@ pub mod apt_repositories;
 pub mod core_inspect;
 pub mod developer_git;
 pub mod identity_nis;
+pub mod network_interfaces;
 pub mod network_wake_on_lan;
 pub mod systemd_units;
 
@@ -13,6 +14,7 @@ use crate::engine::module::Module;
 pub fn registry() -> Vec<Box<dyn Module>> {
     vec![
         Box::new(core_inspect::CoreInspect),
+        Box::new(network_interfaces::NetworkInterfaces),
         Box::new(network_wake_on_lan::NetworkWakeOnLan),
         Box::new(identity_nis::IdentityNis),
         Box::new(systemd_units::SystemdUnits),
