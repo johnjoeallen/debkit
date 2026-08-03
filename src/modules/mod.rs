@@ -1,3 +1,4 @@
+pub mod apt_repositories;
 pub mod core_inspect;
 pub mod developer_git;
 pub mod identity_nis;
@@ -16,6 +17,7 @@ pub fn registry() -> Vec<Box<dyn Module>> {
         Box::new(identity_nis::IdentityNis),
         Box::new(systemd_units::SystemdUnits),
         Box::new(developer_git::DeveloperGit),
+        Box::new(apt_repositories::AptRepositories),
     ]
 }
 

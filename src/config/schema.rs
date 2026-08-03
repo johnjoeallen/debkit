@@ -45,6 +45,7 @@ pub struct DebkitConfig {
     pub nis: NisConfig,
     pub wake_on_lan: WakeOnLanConfig,
     pub git: GitConfig,
+    pub apt: AptConfig,
 }
 
 impl DebkitConfig {
@@ -399,6 +400,16 @@ impl Default for GitConfig {
             credential_store_file: String::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AptConfig {
+    pub enabled: bool,
+    /// e.g. `"http://10.0.0.1:3142"`. Empty means no proxy is declared/managed.
+    pub proxy: String,
+    /// Hosts that should bypass `proxy` via a per-host `DIRECT` override.
+    pub direct_hosts: Vec<String>,
 }
 
 #[cfg(test)]
