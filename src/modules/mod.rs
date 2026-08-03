@@ -6,6 +6,7 @@ pub mod identity_nss;
 pub mod identity_pam;
 pub mod identity_sudo;
 pub mod network_dhcp;
+pub mod network_firewall;
 pub mod network_interfaces;
 pub mod network_wake_on_lan;
 pub mod systemd_units;
@@ -20,6 +21,7 @@ pub fn registry() -> Vec<Box<dyn Module>> {
         Box::new(core_inspect::CoreInspect),
         Box::new(network_interfaces::NetworkInterfaces),
         Box::new(network_dhcp::NetworkDhcp),
+        Box::new(network_firewall::NetworkFirewall),
         Box::new(network_wake_on_lan::NetworkWakeOnLan),
         Box::new(identity_nis::IdentityNis),
         Box::new(identity_nss::IdentityNss),
