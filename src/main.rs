@@ -1,10 +1,15 @@
 mod config;
+mod engine;
 mod install;
+mod modules;
 mod package;
 
 use std::path::PathBuf;
 
+use anyhow::Context as _;
 use clap::{Args, Parser, Subcommand};
+
+use engine::module::{Context as ModuleContext, Module};
 
 #[derive(Debug, Parser)]
 #[command(name = "debkit", version, about = "DebKit CLI")]
@@ -29,6 +34,25 @@ enum Commands {
     Uninstall(UninstallCommand),
     #[command(about = "Show status for a DebKit target")]
     Status(StatusCommand),
+    #[command(about = "Discover observed state for a module (or every module)")]
+    Inspect(ModuleArgs),
+    #[command(about = "Discover and diagnose a module's state against declared intent")]
+    Diagnose(ModuleArgs),
+    #[command(about = "Show the change plan a module would apply")]
+    Plan(ModuleArgs),
+    #[command(about = "Apply a module's change plan and verify the result")]
+    Apply(ModuleArgs),
+    #[command(about = "Run a module's functional verification checks")]
+    Verify(ModuleArgs),
+}
+
+#[derive(Debug, Args)]
+struct ModuleArgs {
+    /// Dotted module name, e.g. `core.inspect`. Omits to run every registered module.
+    module: Option<String>,
+
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -315,8 +339,198 @@ fn run() -> anyhow::Result<()> {
                 install::wake_on_lan::print_status(&config)?;
             }
         },
+        Commands::Inspect(args) => run_inspect(&args)?,
+        Commands::Diagnose(args) => run_diagnose(&args)?,
+        Commands::Plan(args) => run_plan(&args)?,
+        Commands::Apply(args) => run_apply(&args)?,
+        Commands::Verify(args) => run_verify(&args)?,
     }
 
+    Ok(())
+}
+
+fn resolve_modules(selector: &Option<String>) -> anyhow::Result<Vec<Box<dyn Module>>> {
+    match selector {
+        Some(name) => {
+            let module = modules::find(name)
+                .with_context(|| format!("unknown module `{name}` (see `debkit list`)"))?;
+            Ok(vec![module])
+        }
+        None => Ok(modules::registry()),
+    }
+}
+
+fn run_inspect(args: &ModuleArgs) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let ctx = ModuleContext {
+        hostname: config.host.name.clone(),
+        config: &config,
+    };
+    for module in resolve_modules(&args.module)? {
+        let observation = module.discover(&ctx)?;
+        if args.json {
+            let rendered = serde_json::json!({
+                "module": module.name(),
+                "host": ctx.hostname,
+                "owner": observation.owner,
+                "observed": observation.data,
+                "warnings": observation.warnings,
+            });
+            println!("{}", serde_json::to_string_pretty(&rendered)?);
+        } else {
+            println!("== {} ==", module.name());
+            println!("owner: {}", observation.owner.as_deref().unwrap_or("none"));
+            println!("{}", serde_json::to_string_pretty(&observation.data)?);
+            for warning in &observation.warnings {
+                println!("warning: {warning}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_diagnose(args: &ModuleArgs) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let ctx = ModuleContext {
+        hostname: config.host.name.clone(),
+        config: &config,
+    };
+    for module in resolve_modules(&args.module)? {
+        let observation = module.discover(&ctx)?;
+        let diagnosis = module.diagnose(&ctx, &observation);
+        println!("== {} ==", module.name());
+        println!(
+            "compliant: {}",
+            if diagnosis.compliant { "yes" } else { "no" }
+        );
+        if let Some(conflict) = &diagnosis.conflict {
+            println!("conflict: {}", conflict.join(", "));
+        }
+        for finding in &diagnosis.findings {
+            println!("- {finding}");
+        }
+    }
+    Ok(())
+}
+
+fn run_plan(args: &ModuleArgs) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let ctx = ModuleContext {
+        hostname: config.host.name.clone(),
+        config: &config,
+    };
+    for module in resolve_modules(&args.module)? {
+        let observation = module.discover(&ctx)?;
+        let diagnosis = module.diagnose(&ctx, &observation);
+        println!("== {} ==", module.name());
+        if let Some(conflict) = &diagnosis.conflict {
+            println!(
+                "refusing to plan: competing owners are active ({}); set an explicit owner override first",
+                conflict.join(", ")
+            );
+            continue;
+        }
+        let plan = module.plan(&ctx, &observation, &diagnosis)?;
+        print!("{}", plan.render_dry_run());
+    }
+    Ok(())
+}
+
+fn run_apply(args: &ModuleArgs) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let ctx = ModuleContext {
+        hostname: config.host.name.clone(),
+        config: &config,
+    };
+    for module in resolve_modules(&args.module)? {
+        let observation = module.discover(&ctx)?;
+        let diagnosis = module.diagnose(&ctx, &observation);
+        println!("== {} ==", module.name());
+        if let Some(conflict) = &diagnosis.conflict {
+            println!(
+                "refusing to apply: competing owners are active ({}); set an explicit owner override first",
+                conflict.join(", ")
+            );
+            continue;
+        }
+        let plan = module.plan(&ctx, &observation, &diagnosis)?;
+        if plan.is_empty() {
+            println!("already compliant; no changes applied");
+            let evidence = engine::evidence::Evidence {
+                module: module.name().to_string(),
+                host: ctx.hostname.clone(),
+                status: engine::evidence::Status::Compliant,
+                owner: observation.owner.clone(),
+                observed: observation.data.clone(),
+                changes: Vec::new(),
+                verification: Vec::new(),
+                artifacts: Vec::new(),
+            };
+            let path = engine::evidence::write_evidence(&evidence)?;
+            println!("evidence: {}", path.display());
+            continue;
+        }
+
+        let changes_summary: Vec<engine::evidence::AppliedChangeSummary> = (&plan).into();
+        let applied = engine::apply::apply_plan(module.name(), &ctx.hostname, &plan)?;
+        let journal_path = engine::apply::write_journal(&applied)?;
+        println!(
+            "applied {} change(s); journal: {}",
+            applied.entries.len(),
+            journal_path.display()
+        );
+
+        let verification = module.verify(&ctx)?;
+        let failed: Vec<&engine::evidence::VerificationResult> = verification
+            .iter()
+            .filter(|check| check.result == engine::evidence::CheckResult::Fail)
+            .collect();
+
+        let status = if failed.is_empty() {
+            engine::evidence::Status::Changed
+        } else {
+            println!("verification failed; rolling back");
+            engine::apply::rollback(&applied)?;
+            engine::evidence::Status::Error
+        };
+
+        let evidence = engine::evidence::Evidence {
+            module: module.name().to_string(),
+            host: ctx.hostname.clone(),
+            status,
+            owner: observation.owner.clone(),
+            observed: observation.data.clone(),
+            changes: changes_summary,
+            verification,
+            artifacts: vec![journal_path.display().to_string()],
+        };
+        let path = engine::evidence::write_evidence(&evidence)?;
+        println!("evidence: {}", path.display());
+    }
+    Ok(())
+}
+
+fn run_verify(args: &ModuleArgs) -> anyhow::Result<()> {
+    let config = config::load_or_init()?;
+    let ctx = ModuleContext {
+        hostname: config.host.name.clone(),
+        config: &config,
+    };
+    for module in resolve_modules(&args.module)? {
+        println!("== {} ==", module.name());
+        for check in module.verify(&ctx)? {
+            println!(
+                "[{:?}] {}{}",
+                check.result,
+                check.check,
+                check
+                    .detail
+                    .as_deref()
+                    .map(|detail| format!(" — {detail}"))
+                    .unwrap_or_default()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -609,6 +823,67 @@ mod tests {
             cli.command,
             Commands::Status(StatusCommand {
                 command: StatusSubcommand::WakeOnLan
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_inspect_with_module_and_json() {
+        let cli = Cli::try_parse_from(["debkit", "inspect", "core.inspect", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Inspect(ModuleArgs { module: Some(m), json: true }) if m == "core.inspect"
+        ));
+    }
+
+    #[test]
+    fn parses_inspect_without_module_selector() {
+        let cli = Cli::try_parse_from(["debkit", "inspect"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Inspect(ModuleArgs {
+                module: None,
+                json: false
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_diagnose_plan_apply_verify() {
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "diagnose", "core.inspect"])
+                .unwrap()
+                .command,
+            Commands::Diagnose(ModuleArgs {
+                module: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "plan", "core.inspect"])
+                .unwrap()
+                .command,
+            Commands::Plan(ModuleArgs {
+                module: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "apply", "core.inspect"])
+                .unwrap()
+                .command,
+            Commands::Apply(ModuleArgs {
+                module: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "verify", "core.inspect"])
+                .unwrap()
+                .command,
+            Commands::Verify(ModuleArgs {
+                module: Some(_),
+                ..
             })
         ));
     }
