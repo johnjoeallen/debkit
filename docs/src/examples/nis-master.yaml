@@ -1,0 +1,27 @@
+# A NIS master's host override file. This is intentionally sparse -- it
+# only declares what differs from the shared base config -- because that's
+# how the host-override merge is meant to be used; see the Host Override
+# example for the merge semantics themselves.
+#
+# Save as ~/.config/debkit/hosts/iris.yaml
+
+debkit:
+  nis:
+    enabled: true
+    role: master
+    domain: dublinux.lan
+    admin_user: jallen
+    local_admin_groups: [sudo]
+    push_to_slaves: true
+    slaves: [spitfire.dublinux.lan, laptop.dublinux.lan]
+
+  sudo_nopass:
+    enabled: true
+    group: superuser
+    add_current_user: true
+
+  # This host runs the apt-cacher-ng proxy the rest of the lab points at.
+  apt:
+    enabled: true
+    proxy: "http://iris:3142"
+    direct_hosts: [pkg.tailscale.com]

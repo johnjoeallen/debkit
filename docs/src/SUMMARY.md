@@ -1,0 +1,16 @@
+# Summary
+
+- [Introduction](./introduction.md)
+- [CLI Overview](./cli-overview.md)
+- [Lifecycle Modules](./lifecycle-modules.md)
+- [Configuration](./configuration.md)
+  - [Full Example](./config-reference.md)
+- [Example Configs](./examples/README.md)
+  - [Minimal Workstation](./examples/minimal-workstation.md)
+  - [NIS Master](./examples/nis-master.md)
+  - [NIS Slave](./examples/nis-slave.md)
+  - [Laptop with Tailscale](./examples/laptop-tailscale.md)
+  - [Host Override](./examples/host-override.md)
+- [NIS](./nis.md)
+- [Passwordless Sudo](./sudo.md)
+- [Wake-on-LAN](./wake-on-lan.md)

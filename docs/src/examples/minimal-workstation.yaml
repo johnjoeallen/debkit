@@ -1,0 +1,24 @@
+# A fresh dev workstation, no lab-specific features (no NIS, no lifecycle
+# hardware modules). This is the base config the "getting started" flow
+# leaves you with if you accept the defaults for everything except a couple
+# of opt-in toggles.
+#
+# Save as ~/.config/debkit/config.yaml, then:
+#   debkit install foundation
+
+debkit:
+  foundation:
+    install: [essentials, git, ripgrep, rust, npm, wake-on-lan]
+
+  essentials:
+    packages:
+      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim, build-essential]
+
+  git:
+    enabled: true
+    credential_helper: store
+
+  wake_on_lan:
+    enabled: true
+    interfaces: auto
+    backend: auto

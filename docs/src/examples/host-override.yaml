@@ -1,0 +1,16 @@
+# Demonstrates the host-override merge itself, independent of any one
+# feature. Given a shared base config.yaml containing (among other things):
+#
+#   debkit:
+#     foundation:
+#       install: [essentials, git, ripgrep, rust, npm, wake-on-lan]
+#     wake_on_lan:
+#       enabled: true
+#       backend: network_manager
+#
+# ...this host override file, saved as
+# ~/.config/debkit/hosts/<hostname>.yaml, deep-merges on top:
+
+debkit:
+  wake_on_lan:
+    enabled: false

@@ -6,21 +6,21 @@ use anyhow::{Context, bail};
 
 use crate::config::NisConfig;
 
-const DEFAULTDOMAIN_PATH: &str = "/etc/defaultdomain";
-const YP_CONF_PATH: &str = "/etc/yp.conf";
-const NSSWITCH_PATH: &str = "/etc/nsswitch.conf";
-const YP_MAP_ROOT: &str = "/var/yp";
-const YPSERVERS_SOURCE_PATH: &str = "/var/yp/ypservers";
-const YPINIT_PATH: &str = "/usr/lib/yp/ypinit";
+pub(crate) const DEFAULTDOMAIN_PATH: &str = "/etc/defaultdomain";
+pub(crate) const YP_CONF_PATH: &str = "/etc/yp.conf";
+pub(crate) const NSSWITCH_PATH: &str = "/etc/nsswitch.conf";
+pub(crate) const YP_MAP_ROOT: &str = "/var/yp";
+pub(crate) const YPSERVERS_SOURCE_PATH: &str = "/var/yp/ypservers";
+pub(crate) const YPINIT_PATH: &str = "/usr/lib/yp/ypinit";
 const YPXFR_PATH: &str = "/usr/lib/yp/ypxfr";
-const MAKEDBM_PATH: &str = "/usr/lib/yp/makedbm";
-const YPPUSH_PATH: &str = "/usr/sbin/yppush";
+pub(crate) const MAKEDBM_PATH: &str = "/usr/lib/yp/makedbm";
+pub(crate) const YPPUSH_PATH: &str = "/usr/sbin/yppush";
 const YPXFR_REFRESH_SCRIPTS: &[&str] = &[
     "/usr/lib/yp/ypxfr_1perhour",
     "/usr/lib/yp/ypxfr_2perday",
     "/usr/lib/yp/ypxfr_1perday",
 ];
-const FALLBACK_MAPS: &[&str] = &[
+pub(crate) const FALLBACK_MAPS: &[&str] = &[
     "rpc.bynumber",
     "hosts.byname",
     "netid.byname",
@@ -49,7 +49,7 @@ pub enum Role {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NisRole {
+pub(crate) enum NisRole {
     Master,
     Slave,
     Client,
@@ -57,19 +57,19 @@ enum NisRole {
 }
 
 #[derive(Debug, Clone)]
-struct NisPlan {
-    role: NisRole,
-    domain: String,
-    master: Option<String>,
-    admin_user: String,
-    client_servers: Vec<String>,
-    slaves: Vec<String>,
-    push_to_slaves: bool,
-    force_refresh_maps: bool,
-    local_admin_groups: Vec<String>,
-    packages: Vec<&'static str>,
-    services: Vec<&'static str>,
-    optional_services: Vec<&'static str>,
+pub(crate) struct NisPlan {
+    pub(crate) role: NisRole,
+    pub(crate) domain: String,
+    pub(crate) master: Option<String>,
+    pub(crate) admin_user: String,
+    pub(crate) client_servers: Vec<String>,
+    pub(crate) slaves: Vec<String>,
+    pub(crate) push_to_slaves: bool,
+    pub(crate) force_refresh_maps: bool,
+    pub(crate) local_admin_groups: Vec<String>,
+    pub(crate) packages: Vec<&'static str>,
+    pub(crate) services: Vec<&'static str>,
+    pub(crate) optional_services: Vec<&'static str>,
 }
 
 pub fn run(role: Role, config: &NisConfig) -> anyhow::Result<()> {
@@ -311,7 +311,7 @@ fn configure_server_only(plan: &NisPlan) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_plan(requested: Role, config: &NisConfig) -> anyhow::Result<NisPlan> {
+pub(crate) fn build_plan(requested: Role, config: &NisConfig) -> anyhow::Result<NisPlan> {
     let role = match requested {
         Role::Configured => parse_role(&config.role)?,
         Role::Client => NisRole::Client,
@@ -410,7 +410,7 @@ fn optional_services_for(role: NisRole) -> Vec<&'static str> {
     }
 }
 
-fn render_yp_conf(domain: &str, servers: &[&str]) -> String {
+pub(crate) fn render_yp_conf(domain: &str, servers: &[&str]) -> String {
     let mut lines = vec![
         "# Managed by DebKit.".to_string(),
         "# Local changes may be overwritten.".to_string(),
@@ -422,7 +422,7 @@ fn render_yp_conf(domain: &str, servers: &[&str]) -> String {
     lines.join("\n")
 }
 
-fn render_ypservers_source(master: &str, slaves: &[String]) -> String {
+pub(crate) fn render_ypservers_source(master: &str, slaves: &[String]) -> String {
     let mut hosts = vec![master.to_string()];
     hosts.extend(slaves.iter().cloned());
     let mut out = nonempty_unique(hosts.iter().map(String::as_str)).join("\n");
@@ -430,7 +430,7 @@ fn render_ypservers_source(master: &str, slaves: &[String]) -> String {
     out
 }
 
-fn render_ypservers_makedbm_input(master: &str, slaves: &[String]) -> String {
+pub(crate) fn render_ypservers_makedbm_input(master: &str, slaves: &[String]) -> String {
     let mut hosts = vec![master.to_string()];
     hosts.extend(slaves.iter().cloned());
     let mut out = nonempty_unique(hosts.iter().map(String::as_str))
@@ -456,7 +456,7 @@ fn ensure_nsswitch_uses_files_then_nis(path: &Path) -> anyhow::Result<bool> {
     ensure_root_file(path, &updated)
 }
 
-fn render_nsswitch_with_files_then_nis(raw: &str) -> String {
+pub(crate) fn render_nsswitch_with_files_then_nis(raw: &str) -> String {
     let mut saw_passwd = false;
     let mut saw_group = false;
     let mut saw_shadow = false;
@@ -494,7 +494,7 @@ fn render_nsswitch_with_files_then_nis(raw: &str) -> String {
     out
 }
 
-fn nsswitch_has_active_initgroups(raw: &str) -> bool {
+pub(crate) fn nsswitch_has_active_initgroups(raw: &str) -> bool {
     raw.lines().any(|line| {
         let trimmed = line.trim_start();
         !trimmed.starts_with('#') && trimmed.starts_with("initgroups:")
@@ -838,12 +838,12 @@ fn run_privileged_command_with_input(
     Ok(())
 }
 
-fn package_installed(package: &str) -> anyhow::Result<bool> {
-    let status = Command::new("dpkg-query")
+pub(crate) fn package_installed(package: &str) -> anyhow::Result<bool> {
+    let output = Command::new("dpkg-query")
         .args(["-W", "-f=${Status}", package])
-        .status()
+        .output()
         .with_context(|| format!("failed to query package `{package}`"))?;
-    Ok(status.success())
+    Ok(output.status.success())
 }
 
 fn ensure_root_dir(path: &Path) -> anyhow::Result<bool> {
@@ -1003,7 +1003,7 @@ fn validate_nis_admin_group_membership(plan: &NisPlan) {
     }
 }
 
-fn group_entry_lists_user(group: &str, user: &str, raw: &str) -> bool {
+pub(crate) fn group_entry_lists_user(group: &str, user: &str, raw: &str) -> bool {
     raw.lines().any(|line| {
         let mut parts = line.split(':');
         let name = parts.next().unwrap_or_default();
@@ -1016,11 +1016,11 @@ fn group_entry_lists_user(group: &str, user: &str, raw: &str) -> bool {
     })
 }
 
-fn whitespace_fields_contain(raw: &str, expected: &str) -> bool {
+pub(crate) fn whitespace_fields_contain(raw: &str, expected: &str) -> bool {
     raw.split_whitespace().any(|field| field == expected)
 }
 
-fn id_output_contains_group(raw: &str, group: &str) -> bool {
+pub(crate) fn id_output_contains_group(raw: &str, group: &str) -> bool {
     raw.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
         .any(|field| field == group)
 }
@@ -1034,7 +1034,7 @@ fn command_available(program: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn capture(program: &str, args: &[&str]) -> anyhow::Result<String> {
+pub(crate) fn capture(program: &str, args: &[&str]) -> anyhow::Result<String> {
     capture_status(program, args)
 }
 
@@ -1057,7 +1057,7 @@ fn current_hostname() -> anyhow::Result<String> {
     Ok(capture("hostname", &[])?.trim().to_string())
 }
 
-fn current_fqdn(domain: &str) -> anyhow::Result<String> {
+pub(crate) fn current_fqdn(domain: &str) -> anyhow::Result<String> {
     let fqdn = capture("hostname", &["-f"])
         .ok()
         .map(|value| value.trim().to_string())
@@ -1102,13 +1102,13 @@ fn nonempty_unique<'a>(items: impl IntoIterator<Item = &'a str>) -> Vec<String> 
 }
 
 impl NisPlan {
-    fn client_servers_as_strs(&self) -> Vec<&str> {
+    pub(crate) fn client_servers_as_strs(&self) -> Vec<&str> {
         self.client_servers.iter().map(String::as_str).collect()
     }
 }
 
 impl NisRole {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Master => "NIS master",
             Self::Slave => "NIS slave",
@@ -1117,7 +1117,7 @@ impl NisRole {
         }
     }
 
-    fn config_value(self) -> &'static str {
+    pub(crate) fn config_value(self) -> &'static str {
         match self {
             Self::Master => "master",
             Self::Slave => "slave",
@@ -1126,11 +1126,11 @@ impl NisRole {
         }
     }
 
-    fn includes_client(self) -> bool {
+    pub(crate) fn includes_client(self) -> bool {
         matches!(self, Self::Master | Self::Slave | Self::Client)
     }
 
-    fn includes_server(self) -> bool {
+    pub(crate) fn includes_server(self) -> bool {
         matches!(self, Self::Master | Self::Slave | Self::ServerOnly)
     }
 }

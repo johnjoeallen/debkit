@@ -6,10 +6,10 @@ use anyhow::{Context, bail};
 
 use crate::config::SudoNopassConfig;
 
-const SUDOERS_MAIN_PATH: &str = "/etc/sudoers";
-const SUDOERS_DROPIN_DIR: &str = "/etc/sudoers.d";
-const SUDOERS_STD_GROUP_PATH: &str = "/etc/sudoers.d/00-sudo-group";
-const LEGACY_NOPASS_PATH: &str = "/etc/sudoers.d/nopass";
+pub(crate) const SUDOERS_MAIN_PATH: &str = "/etc/sudoers";
+pub(crate) const SUDOERS_DROPIN_DIR: &str = "/etc/sudoers.d";
+pub(crate) const SUDOERS_STD_GROUP_PATH: &str = "/etc/sudoers.d/00-sudo-group";
+pub(crate) const LEGACY_NOPASS_PATH: &str = "/etc/sudoers.d/nopass";
 
 pub fn run(config: &SudoNopassConfig) -> anyhow::Result<()> {
     if !config.enabled {
@@ -96,7 +96,7 @@ fn secure_sudoers_dropin(path: &str) -> anyhow::Result<()> {
     run_root_command("chmod", &["0440", &path])
 }
 
-fn render_group_nopass_rule(group: &str) -> String {
+pub(crate) fn render_group_nopass_rule(group: &str) -> String {
     format!("%{group} ALL=(ALL:ALL) NOPASSWD: ALL\n")
 }
 
@@ -198,7 +198,7 @@ fn validate_passwordless_sudo(config: &SudoNopassConfig) {
     }
 }
 
-fn sudo_policy_allows_nopass(user: &str) -> anyhow::Result<bool> {
+pub(crate) fn sudo_policy_allows_nopass(user: &str) -> anyhow::Result<bool> {
     let output = Command::new("sudo")
         .args(["-n", "-l", "-U", user])
         .output()
@@ -211,7 +211,7 @@ fn sudo_policy_allows_nopass(user: &str) -> anyhow::Result<bool> {
     Ok(stdout.contains("NOPASSWD") || stderr.contains("NOPASSWD"))
 }
 
-fn effective_users(config: &SudoNopassConfig) -> Vec<String> {
+pub(crate) fn effective_users(config: &SudoNopassConfig) -> Vec<String> {
     let mut users: Vec<String> = config
         .users
         .iter()
@@ -240,7 +240,7 @@ fn current_user() -> Option<String> {
         .map(|value| value.trim().to_string())
 }
 
-fn group_exists(group: &str) -> bool {
+pub(crate) fn group_exists(group: &str) -> bool {
     Command::new("getent")
         .args(["group", group])
         .status()
@@ -248,7 +248,7 @@ fn group_exists(group: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn local_group_exists(group: &str) -> bool {
+pub(crate) fn local_group_exists(group: &str) -> bool {
     fs::read_to_string("/etc/group")
         .ok()
         .map(|raw| {
@@ -258,15 +258,15 @@ fn local_group_exists(group: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn user_exists(user: &str) -> bool {
+pub(crate) fn user_exists(user: &str) -> bool {
     Command::new("id")
         .args(["-u", user])
-        .status()
-        .map(|status| status.success())
+        .output()
+        .map(|output| output.status.success())
         .unwrap_or(false)
 }
 
-fn user_is_in_group(user: &str, group: &str) -> anyhow::Result<bool> {
+pub(crate) fn user_is_in_group(user: &str, group: &str) -> anyhow::Result<bool> {
     let output = Command::new("id")
         .args(["-nG", user])
         .output()
