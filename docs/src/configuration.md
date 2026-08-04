@@ -21,7 +21,7 @@ master/slave pair, a roaming laptop).
 ```yaml
 debkit:
   foundation:
-    install: [essentials, git, ripgrep, rust, npm, codex, variety, nis, wake-on-lan]
+    install: [essentials, git, rust, npm, codex, variety, nis, wake-on-lan]
 ```
 
 ## Essentials
@@ -33,7 +33,7 @@ workstation:
 debkit:
   essentials:
     packages:
-      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim]
+      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim, ripgrep]
 ```
 
 The target only runs `apt-get update` when one or more configured packages are missing.
