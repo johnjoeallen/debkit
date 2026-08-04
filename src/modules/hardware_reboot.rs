@@ -4,10 +4,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::evidence::VerificationResult;
+use crate::engine::exec;
 use crate::engine::module::{Context, Diagnosis, Module, Observation};
-use crate::engine::plan::ChangePlan;
+use crate::engine::plan::{Change, ChangePlan, Risk};
 
 const DMI_ROOT: &str = "/sys/class/dmi/id";
+const GRUB_DEFAULT_PATH: &str = "/etc/default/grub";
+const GRUB_CFG_PATH: &str = "/boot/grub/grub.cfg";
+const GRUB_CMDLINE_KEY: &str = "GRUB_CMDLINE_LINUX_DEFAULT";
 
 /// Board capacities in ascending order. Used to round an observed value up to the
 /// nearest "nominal" size a vendor would actually sell/market, absorbing the gap
@@ -62,10 +66,19 @@ struct BoardRegistryFile {
 /// Missing individual fields, or no DMI support on the platform at all, is a normal
 /// `None`/`dmi_available: false` outcome, not a discovery error.
 ///
-/// `plan()` is always empty: there is no automated fix for "your BIOS is on a
-/// known-affected version" or "a DIMM went undetected" — this module is purely
-/// diagnostic, matching `systemd.units`/`identity.nis`'s uninitialized-maps precedent
-/// for standing findings this codebase doesn't attempt to auto-close.
+/// The memory-capacity and known-affected-BIOS findings themselves still have no
+/// automated fix — DebKit can't reseat a DIMM or safely choose to flash a BIOS on your
+/// behalf. What `plan()`/`apply()` *do* manage is the actual underlying mitigation for
+/// both symptoms: persisting `reboot=<mode>[,<type>]` (`reboot_mode`/`reboot_type`)
+/// into `/etc/default/grub`'s `GRUB_CMDLINE_LINUX_DEFAULT` and regenerating
+/// `/boot/grub/grub.cfg` via `update-grub`. `reboot_mode: cold` (the default) sets the
+/// BIOS cold-boot flag, forcing a full memory retrain/POST on every future reboot —
+/// both findings above stem from a *warm* reboot skipping that retrain, so this is a
+/// real fix for the reboot-time symptom even though it can't touch the DIMM or BIOS
+/// version directly. This is genuinely higher-risk than anything else this module
+/// does (a bad `/etc/default/grub` edit can leave a system unbootable), so both
+/// changes are `Risk::High` and the parsing is deliberately conservative — see
+/// `patch_grub_cmdline_default`'s doc comment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HardwareRebootObservation {
     dmi_available: bool,
@@ -82,6 +95,20 @@ struct HardwareRebootObservation {
     /// Observed `/proc/meminfo` `MemTotal`, rounded up to the nearest capacity in
     /// `COMMON_MEMORY_CAPACITIES_GIB`. `None` if `/proc/meminfo` couldn't be read.
     observed_memory_gib: Option<u32>,
+    /// Raw content of `/etc/default/grub`, if readable.
+    grub_default_current: Option<String>,
+    /// Whether `GRUB_CMDLINE_LINUX_DEFAULT` already contains a `reboot=<desired>`
+    /// token. `None` if the file couldn't be read, or didn't contain a recognizable
+    /// `GRUB_CMDLINE_LINUX_DEFAULT="..."` line (this module never guesses at an
+    /// unfamiliar layout).
+    grub_default_declares_reboot_arg: Option<bool>,
+    /// The full patched file content `plan()` would write, computed only when
+    /// `grub_default_declares_reboot_arg == Some(false)`.
+    grub_default_desired: Option<String>,
+    /// Whether `/boot/grub/grub.cfg` — the generated, effective config actually read
+    /// at boot — already contains the desired token. `None` if unreadable (commonly
+    /// root-only permissions; `debkit diagnose` run unprivileged can't confirm this).
+    grub_cfg_declares_reboot_arg: Option<bool>,
 }
 
 pub struct HardwareReboot;
@@ -95,13 +122,32 @@ impl Module for HardwareReboot {
         "AM5 board/BIOS identification, known-affected-BIOS registry, memory-capacity check"
     }
 
-    fn discover(&self, _ctx: &Context) -> anyhow::Result<Observation> {
+    fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let dmi = read_dmi();
         let registry = load_board_registry();
         let registry_match = dmi.find_registry_match(&registry);
         let current_bios_is_known_affected = registry_match
             .as_ref()
             .is_some_and(|entry| bios_version_is_listed(dmi.bios_version.as_deref(), entry));
+
+        let desired_arg = desired_reboot_arg(
+            &ctx.config.hardware_reboot.reboot_mode,
+            &ctx.config.hardware_reboot.reboot_type,
+        );
+        let grub_default_current = fs::read_to_string(GRUB_DEFAULT_PATH).ok();
+        let grub_default_declares_reboot_arg = grub_default_current
+            .as_deref()
+            .and_then(grub_cmdline_default_raw_value)
+            .and_then(|value| grub_cmdline_declares(&value, &desired_arg));
+        let grub_default_desired = if grub_default_declares_reboot_arg == Some(false) {
+            grub_default_current
+                .as_deref()
+                .and_then(|content| patch_grub_cmdline_default(content, &desired_arg))
+        } else {
+            None
+        };
+        let grub_cfg_declares_reboot_arg =
+            read_grub_cfg().map(|content| grub_cfg_declares_reboot_arg(&content, &desired_arg));
 
         let data = HardwareRebootObservation {
             dmi_available: dmi.available,
@@ -116,6 +162,10 @@ impl Module for HardwareReboot {
             registry_match,
             current_bios_is_known_affected,
             observed_memory_gib: read_mem_total_kib().and_then(round_up_to_common_capacity_gib),
+            grub_default_current,
+            grub_default_declares_reboot_arg,
+            grub_default_desired,
+            grub_cfg_declares_reboot_arg,
         };
 
         let mut observation = Observation::new(serde_json::to_value(&data)?);
@@ -129,6 +179,18 @@ impl Module for HardwareReboot {
             observation = observation.with_warning(format!(
                 "BIOS `{}` is on this board's known-affected list",
                 data.bios_version.as_deref().unwrap_or("unknown")
+            ));
+        }
+        if data.grub_default_current.is_none() {
+            observation = observation.with_warning(format!("could not read {GRUB_DEFAULT_PATH}"));
+        } else if data.grub_default_declares_reboot_arg.is_none() {
+            observation = observation.with_warning(format!(
+                "{GRUB_DEFAULT_PATH} does not contain a recognizable {GRUB_CMDLINE_KEY}=\"...\" line; refusing to guess how to patch it"
+            ));
+        }
+        if data.grub_cfg_declares_reboot_arg.is_none() {
+            observation = observation.with_warning(format!(
+                "could not read {GRUB_CFG_PATH} (commonly root-only permissions) — cannot confirm the effective boot config"
             ));
         }
         Ok(observation)
@@ -182,6 +244,25 @@ impl Module for HardwareReboot {
             }
         }
 
+        let desired_arg = desired_reboot_arg(
+            &ctx.config.hardware_reboot.reboot_mode,
+            &ctx.config.hardware_reboot.reboot_type,
+        );
+        match data.grub_default_declares_reboot_arg {
+            Some(false) => findings.push(format!(
+                "{GRUB_DEFAULT_PATH} does not declare `reboot={desired_arg}` — a cold reboot forces full memory retraining, the actual mitigation for the findings above"
+            )),
+            None => findings.push(format!(
+                "could not confirm whether {GRUB_DEFAULT_PATH} declares `reboot={desired_arg}`"
+            )),
+            Some(true) => {}
+        }
+        if data.grub_cfg_declares_reboot_arg == Some(false) {
+            findings.push(format!(
+                "{GRUB_CFG_PATH} does not reflect `reboot={desired_arg}` yet — run `update-grub` (or `debkit apply hardware.reboot`)"
+            ));
+        }
+
         if findings.is_empty() {
             Diagnosis::compliant()
         } else {
@@ -191,13 +272,64 @@ impl Module for HardwareReboot {
 
     fn plan(
         &self,
-        _ctx: &Context,
-        _observation: &Observation,
-        _diagnosis: &Diagnosis,
+        ctx: &Context,
+        observation: &Observation,
+        diagnosis: &Diagnosis,
     ) -> anyhow::Result<ChangePlan> {
-        // See module doc comment: neither a BIOS compatibility flag nor an undetected
-        // DIMM has an automated fix. Purely diagnostic.
-        Ok(ChangePlan::new())
+        let mut plan = ChangePlan::new();
+        if !ctx.config.hardware_reboot.enabled || diagnosis.compliant {
+            return Ok(plan);
+        }
+
+        // See module doc comment: the memory-capacity and known-affected-BIOS
+        // findings themselves have no automated fix. This only ever acts on the
+        // shared grub-level mitigation for both.
+        let data: HardwareRebootObservation = serde_json::from_value(observation.data.clone())?;
+        let desired_arg = desired_reboot_arg(
+            &ctx.config.hardware_reboot.reboot_mode,
+            &ctx.config.hardware_reboot.reboot_type,
+        );
+
+        let needs_default_write = data.grub_default_declares_reboot_arg == Some(false)
+            && data.grub_default_desired.is_some();
+        let effective_stale = data.grub_cfg_declares_reboot_arg == Some(false);
+        if !needs_default_write && !effective_stale {
+            return Ok(plan);
+        }
+
+        let Some(update_grub) =
+            resolve_command(&["update-grub", "/usr/sbin/update-grub", "/sbin/update-grub"])
+        else {
+            // No update-grub on this host -- not a GRUB-managed boot setup DebKit
+            // can act on. Writing /etc/default/grub with nothing to regenerate it
+            // would just leave a half-applied, misleading state.
+            return Ok(plan);
+        };
+
+        if needs_default_write {
+            plan.push(
+                format!("declare `reboot={desired_arg}` in {GRUB_DEFAULT_PATH}"),
+                Risk::High,
+                Change::WriteFile {
+                    path: PathBuf::from(GRUB_DEFAULT_PATH),
+                    content: data
+                        .grub_default_desired
+                        .clone()
+                        .expect("needs_default_write implies grub_default_desired is Some"),
+                },
+            );
+        }
+        plan.push(
+            "regenerate /boot/grub/grub.cfg (update-grub)",
+            Risk::High,
+            Change::RunCommand {
+                program: update_grub.to_string(),
+                args: Vec::new(),
+                privileged: true,
+            },
+        );
+
+        Ok(plan)
     }
 
     fn verify(&self, ctx: &Context) -> anyhow::Result<Vec<VerificationResult>> {
@@ -255,6 +387,23 @@ impl Module for HardwareReboot {
             None => checks.push(VerificationResult::skipped(
                 "BIOS is not on this board's known-affected list",
                 "no registry entry for this board",
+            )),
+        }
+
+        let desired_arg = desired_reboot_arg(
+            &ctx.config.hardware_reboot.reboot_mode,
+            &ctx.config.hardware_reboot.reboot_type,
+        );
+        let check_name = format!("{GRUB_CFG_PATH} declares reboot={desired_arg}");
+        match read_grub_cfg().map(|content| grub_cfg_declares_reboot_arg(&content, &desired_arg)) {
+            Some(true) => checks.push(VerificationResult::pass(check_name)),
+            Some(false) => checks.push(VerificationResult::fail(
+                check_name,
+                "not present in the generated config — run `update-grub` or `debkit apply hardware.reboot`",
+            )),
+            None => checks.push(VerificationResult::skipped(
+                check_name,
+                "could not read /boot/grub/grub.cfg (commonly root-only permissions)",
             )),
         }
 
@@ -368,6 +517,133 @@ fn round_up_to_common_capacity_gib(total_kib: u64) -> Option<u32> {
         .iter()
         .copied()
         .find(|&capacity| total_gib <= capacity as f64 * 1.02)
+}
+
+fn desired_reboot_arg(mode: &str, kind: &str) -> String {
+    if kind.is_empty() {
+        mode.to_string()
+    } else {
+        format!("{mode},{kind}")
+    }
+}
+
+/// Extracts the raw `"..."`/`'...'` value (including quotes) from
+/// `/etc/default/grub`'s active (non-commented) `GRUB_CMDLINE_LINUX_DEFAULT=` line.
+/// Exact-matches the key up to `=` so it's never confused with the separate
+/// `GRUB_CMDLINE_LINUX` variable (no `_DEFAULT` suffix) — real Debian configs
+/// commonly have both, and this host's own `/etc/default/grub` has exactly that
+/// shape (a commented `GRUB_CMDLINE_LINUX=` template line, plus an active one
+/// further down). `None` if no matching line is found.
+fn grub_cmdline_default_raw_value(content: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            return None;
+        }
+        trimmed
+            .strip_prefix(GRUB_CMDLINE_KEY)?
+            .strip_prefix('=')
+            .map(str::to_string)
+    })
+}
+
+/// Whether the quoted value already contains a `reboot=<desired_arg>` token
+/// (anywhere, not just at the end — see `patch_quoted_value`'s doc comment for why
+/// position matters). `None` if `value` isn't a simple `"..."`/`'...'` quoted string.
+fn grub_cmdline_declares(value: &str, desired_arg: &str) -> Option<bool> {
+    let inner = unquote(value)?;
+    let desired_token = format!("reboot={desired_arg}");
+    Some(inner.split_whitespace().any(|token| token == desired_token))
+}
+
+fn unquote(value: &str) -> Option<&str> {
+    let value = value.trim_end();
+    let quote = value.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    value.strip_prefix(quote)?.strip_suffix(quote)
+}
+
+/// Replaces any existing `reboot=...` token in `value`'s quoted contents with
+/// `reboot=<desired_arg>` (appending it if none was present) and re-quotes with the
+/// same quote character. Deliberately does NOT try to preserve the original token's
+/// position — it filters out any existing `reboot=` token and appends the new one at
+/// the end. That's fine for `grub_cmdline_declares`'s "is it there at all" check
+/// (position-independent), but means `patch_grub_cmdline_default`'s output can differ
+/// byte-for-byte from an already-compliant file if the existing token wasn't already
+/// last; callers must use the semantic `grub_cmdline_declares` check to decide
+/// whether a write is needed at all, never raw string equality.
+fn patch_quoted_value(value: &str, desired_arg: &str) -> Option<String> {
+    let quote = value.trim_end().chars().next()?;
+    let inner = unquote(value)?;
+    let mut tokens: Vec<String> = inner
+        .split_whitespace()
+        .filter(|token| !token.starts_with("reboot="))
+        .map(str::to_string)
+        .collect();
+    tokens.push(format!("reboot={desired_arg}"));
+    Some(format!("{quote}{}{quote}", tokens.join(" ")))
+}
+
+/// Patches `/etc/default/grub`'s full content, replacing only the
+/// `GRUB_CMDLINE_LINUX_DEFAULT=` line's value and leaving every other line — including
+/// a separate active `GRUB_CMDLINE_LINUX=` line, comments, blank lines — untouched.
+/// Returns `None` if no matching line was found (this module never guesses at an
+/// unfamiliar grub layout) or the line's value wasn't a simple quoted string.
+fn patch_grub_cmdline_default(current: &str, desired_arg: &str) -> Option<String> {
+    let mut found = false;
+    let mut patched_lines: Vec<String> = Vec::new();
+    for line in current.lines() {
+        let trimmed = line.trim_start();
+        if !found
+            && !trimmed.starts_with('#')
+            && let Some(rest) = trimmed.strip_prefix(GRUB_CMDLINE_KEY)
+            && let Some(value) = rest.strip_prefix('=')
+            && let Some(patched_value) = patch_quoted_value(value, desired_arg)
+        {
+            found = true;
+            patched_lines.push(format!("{GRUB_CMDLINE_KEY}={patched_value}"));
+            continue;
+        }
+        patched_lines.push(line.to_string());
+    }
+    if !found {
+        return None;
+    }
+    let mut result = patched_lines.join("\n");
+    if current.ends_with('\n') {
+        result.push('\n');
+    }
+    Some(result)
+}
+
+fn read_grub_cfg() -> Option<String> {
+    fs::read_to_string(GRUB_CFG_PATH).ok()
+}
+
+/// Whether the desired `reboot=<arg>` token appears anywhere in the generated
+/// `grub.cfg` (across any boot entry) — a coarse but real functional signal, not a
+/// per-entry guarantee.
+fn grub_cfg_declares_reboot_arg(grub_cfg: &str, desired_arg: &str) -> bool {
+    let desired_token = format!("reboot={desired_arg}");
+    grub_cfg
+        .lines()
+        .any(|line| line.split_whitespace().any(|token| token == desired_token))
+}
+
+/// `update-grub` lives in `/usr/sbin`, which typically isn't on a regular user's
+/// `PATH` on Debian — same footgun `network.firewall` hit with `iptables`/`nft`.
+/// Tries the bare name first (respects `PATH` if it does include sbin), then the
+/// well-known absolute paths.
+fn resolve_command(candidates: &[&'static str]) -> Option<&'static str> {
+    candidates.iter().copied().find(|candidate| {
+        if candidate.starts_with('/') {
+            Path::new(candidate).exists()
+        } else {
+            exec::command_available(candidate)
+        }
+    })
 }
 
 fn board_registry_path(home: &Path) -> PathBuf {
@@ -522,6 +798,12 @@ mod tests {
             registry_match: None,
             current_bios_is_known_affected: false,
             observed_memory_gib: Some(128),
+            grub_default_current: Some(
+                "GRUB_CMDLINE_LINUX_DEFAULT=\"quiet reboot=cold\"\n".to_string(),
+            ),
+            grub_default_declares_reboot_arg: Some(true),
+            grub_default_desired: None,
+            grub_cfg_declares_reboot_arg: Some(true),
         }
     }
 
@@ -622,5 +904,181 @@ mod tests {
         };
         let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
+    }
+
+    #[test]
+    fn desired_reboot_arg_omits_type_when_empty() {
+        assert_eq!(desired_reboot_arg("cold", ""), "cold");
+        assert_eq!(desired_reboot_arg("cold", "acpi"), "cold,acpi");
+    }
+
+    /// This is this host's real /etc/default/grub content (captured live while
+    /// building this module) -- it has exactly the tricky shape the parser needs to
+    /// get right: a commented GRUB_CMDLINE_LINUX= template line near the top, and a
+    /// separate *active* GRUB_CMDLINE_LINUX= line (no _DEFAULT) near the bottom, which
+    /// must never be confused with GRUB_CMDLINE_LINUX_DEFAULT.
+    const REAL_GRUB_DEFAULT_SAMPLE: &str = "\
+# If you change this file or any /etc/default/grub.d/*.cfg file,
+# run 'update-grub' afterwards to update /boot/grub/grub.cfg.
+
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=5
+GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"
+#GRUB_CMDLINE_LINUX=\"acpi=force\"
+
+GRUB_DISABLE_OS_PROBER=false
+GRUB_CMDLINE_LINUX=\"acpi=force\"
+";
+
+    #[test]
+    fn finds_active_default_line_ignoring_commented_and_non_default_lines() {
+        assert_eq!(
+            grub_cmdline_default_raw_value(REAL_GRUB_DEFAULT_SAMPLE),
+            Some("\"quiet\"".to_string())
+        );
+    }
+
+    #[test]
+    fn declares_checks_are_position_independent_and_exact_token_match() {
+        assert_eq!(grub_cmdline_declares("\"reboot=cold\"", "cold"), Some(true));
+        assert_eq!(
+            grub_cmdline_declares("\"quiet reboot=cold splash\"", "cold"),
+            Some(true)
+        );
+        assert_eq!(
+            grub_cmdline_declares("\"reboot=warm\"", "cold"),
+            Some(false)
+        );
+        // Not a substring match -- "reboot=cold,acpi" must not satisfy "cold".
+        assert_eq!(
+            grub_cmdline_declares("\"reboot=cold,acpi\"", "cold"),
+            Some(false)
+        );
+        assert_eq!(grub_cmdline_declares("unquoted", "cold"), None);
+    }
+
+    #[test]
+    fn patch_quoted_value_replaces_existing_reboot_token() {
+        assert_eq!(
+            patch_quoted_value("\"quiet reboot=warm splash\"", "cold"),
+            Some("\"quiet splash reboot=cold\"".to_string())
+        );
+    }
+
+    #[test]
+    fn patch_quoted_value_appends_when_absent() {
+        assert_eq!(
+            patch_quoted_value("\"quiet\"", "cold"),
+            Some("\"quiet reboot=cold\"".to_string())
+        );
+    }
+
+    #[test]
+    fn patch_grub_cmdline_default_only_touches_the_default_line() {
+        let patched = patch_grub_cmdline_default(REAL_GRUB_DEFAULT_SAMPLE, "cold,acpi").unwrap();
+        assert!(patched.contains("GRUB_CMDLINE_LINUX_DEFAULT=\"quiet reboot=cold,acpi\""));
+        // The unrelated active GRUB_CMDLINE_LINUX= line (no _DEFAULT) must survive
+        // untouched -- this is the exact real-world case that would break a naive
+        // prefix match.
+        assert!(patched.contains("GRUB_CMDLINE_LINUX=\"acpi=force\"\n"));
+        assert!(patched.contains("#GRUB_CMDLINE_LINUX=\"acpi=force\"\n"));
+        assert!(patched.ends_with('\n'));
+    }
+
+    #[test]
+    fn patch_grub_cmdline_default_none_when_no_matching_line() {
+        assert_eq!(patch_grub_cmdline_default("GRUB_TIMEOUT=5\n", "cold"), None);
+    }
+
+    #[test]
+    fn grub_cfg_reboot_arg_check_is_a_substring_of_lines_not_whole_content() {
+        let cfg = "linux /boot/vmlinuz root=UUID=x ro quiet reboot=cold\ninitrd /boot/initrd.img\n";
+        assert!(grub_cfg_declares_reboot_arg(cfg, "cold"));
+        assert!(!grub_cfg_declares_reboot_arg(cfg, "warm"));
+    }
+
+    fn config_with_reboot_args(mode: &str, kind: &str) -> crate::config::DebkitConfig {
+        let mut config = crate::config::DebkitConfig::default();
+        config.hardware_reboot.enabled = true;
+        config.hardware_reboot.reboot_mode = mode.to_string();
+        config.hardware_reboot.reboot_type = kind.to_string();
+        config
+    }
+
+    #[test]
+    fn compliant_when_grub_already_declares_desired_arg() {
+        let config = config_with_reboot_args("cold", "");
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(base_data()));
+        assert!(diagnosis.compliant);
+    }
+
+    #[test]
+    fn mismatch_and_plan_when_grub_default_missing_the_arg() {
+        let mut data = base_data();
+        data.grub_default_current = Some("GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"\n".to_string());
+        data.grub_default_declares_reboot_arg = Some(false);
+        data.grub_default_desired =
+            patch_grub_cmdline_default(data.grub_default_current.as_ref().unwrap(), "cold");
+        data.grub_cfg_declares_reboot_arg = Some(false);
+
+        let config = config_with_reboot_args("cold", "");
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data.clone()));
+        assert!(!diagnosis.compliant);
+        assert!(
+            diagnosis
+                .findings
+                .iter()
+                .any(|f| f.contains("does not declare `reboot=cold`"))
+        );
+
+        // Can't assert on the actual plan() content here without update-grub being
+        // resolvable in the test environment (resolve_command checks the real PATH/
+        // filesystem) -- that path is exercised live in modules/mod.rs-external
+        // testing instead. This confirms the diagnose()-level behavior is correct
+        // regardless of what's installed on the machine running `cargo test`.
+    }
+
+    #[test]
+    fn effective_only_stale_is_still_a_mismatch() {
+        let mut data = base_data();
+        // Source already declares it, but grub.cfg hasn't been regenerated yet.
+        data.grub_cfg_declares_reboot_arg = Some(false);
+        let config = config_with_reboot_args("cold", "");
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data));
+        assert!(!diagnosis.compliant);
+        assert!(
+            diagnosis
+                .findings
+                .iter()
+                .any(|f| f.contains("does not reflect"))
+        );
+    }
+
+    #[test]
+    fn unreadable_grub_cfg_is_not_treated_as_a_mismatch() {
+        let mut data = base_data();
+        data.grub_cfg_declares_reboot_arg = None;
+        let config = config_with_reboot_args("cold", "");
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data));
+        assert!(
+            diagnosis.compliant,
+            "None means \"can't confirm\", not \"wrong\""
+        );
     }
 }

@@ -41,7 +41,7 @@ enum Commands {
     #[command(about = "Show the change plan a module would apply")]
     Plan(ModuleArgs),
     #[command(about = "Apply a module's change plan and verify the result")]
-    Apply(ModuleArgs),
+    Apply(ApplyArgs),
     #[command(about = "Run a module's functional verification checks")]
     Verify(ModuleArgs),
     #[command(about = "Reverse a module's most recent applied change plan")]
@@ -57,6 +57,30 @@ struct ModuleArgs {
 
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ApplyArgs {
+    /// Dotted module name, e.g. `core.inspect`. Omits to run every registered module;
+    /// optional (and cross-checked, not required) when --from-run is given, since the
+    /// staged run's manifest already records which module it was staged for.
+    module: Option<String>,
+
+    #[arg(long)]
+    json: bool,
+
+    /// Materialize the change plan into /tmp/debkit/<run-id>/ instead of touching
+    /// real files. Nothing is applied, nothing is verified, no evidence is written —
+    /// safe to run without root even for changes that would need it to actually apply.
+    #[arg(long, conflicts_with = "from_run")]
+    dry_run: bool,
+
+    /// Apply exactly the plan staged by an earlier `--dry-run` run, identified by its
+    /// UUID, instead of a freshly recomputed one. Refuses if the system has drifted
+    /// since staging (a freshly-computed plan no longer matches what was staged) —
+    /// re-run --dry-run to refresh the preview.
+    #[arg(long, value_name = "RUN_ID", conflicts_with = "dry_run")]
+    from_run: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -521,12 +545,17 @@ fn run_plan(args: &ModuleArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_apply(args: &ModuleArgs) -> anyhow::Result<()> {
+fn run_apply(args: &ApplyArgs) -> anyhow::Result<()> {
     let config = config::load_or_init()?;
     let ctx = ModuleContext {
         hostname: config.host.name.clone(),
         config: &config,
     };
+
+    if let Some(run_id) = &args.from_run {
+        return apply_from_staged_run(&ctx, run_id, args.module.as_deref());
+    }
+
     for module in resolve_modules(&args.module)? {
         let observation = module.discover(&ctx)?;
         let diagnosis = module.diagnose(&ctx, &observation);
@@ -540,58 +569,178 @@ fn run_apply(args: &ModuleArgs) -> anyhow::Result<()> {
         }
         let plan = module.plan(&ctx, &observation, &diagnosis)?;
         if plan.is_empty() {
-            println!("already compliant; no changes applied");
-            let evidence = engine::evidence::Evidence {
-                module: module.name().to_string(),
-                host: ctx.hostname.clone(),
-                status: engine::evidence::Status::Compliant,
-                owner: observation.owner.clone(),
-                observed: observation.data.clone(),
-                changes: Vec::new(),
-                verification: Vec::new(),
-                artifacts: Vec::new(),
-            };
-            let path = engine::evidence::write_evidence(&evidence)?;
-            println!("evidence: {}", path.display());
+            println!(
+                "already compliant; no changes {}",
+                if args.dry_run { "to stage" } else { "applied" }
+            );
+            if args.dry_run {
+                continue;
+            }
+            write_compliant_evidence(&ctx, module.name(), &observation)?;
             continue;
         }
 
-        let changes_summary: Vec<engine::evidence::AppliedChangeSummary> = (&plan).into();
-        let applied = engine::apply::apply_plan(module.name(), &ctx.hostname, &plan)?;
-        let journal_path = engine::apply::write_journal(&applied)?;
-        println!(
-            "applied {} change(s); journal: {}",
-            applied.entries.len(),
-            journal_path.display()
-        );
+        if args.dry_run {
+            print_staged_plan(&engine::apply::stage_plan(
+                module.name(),
+                &ctx.hostname,
+                &plan,
+            )?);
+            continue;
+        }
 
-        let verification = module.verify(&ctx)?;
-        let failed: Vec<&engine::evidence::VerificationResult> = verification
-            .iter()
-            .filter(|check| check.result == engine::evidence::CheckResult::Fail)
-            .collect();
-
-        let status = if failed.is_empty() {
-            engine::evidence::Status::Changed
-        } else {
-            println!("verification failed; rolling back");
-            engine::apply::rollback(&applied)?;
-            engine::evidence::Status::Error
-        };
-
-        let evidence = engine::evidence::Evidence {
-            module: module.name().to_string(),
-            host: ctx.hostname.clone(),
-            status,
-            owner: observation.owner.clone(),
-            observed: observation.data.clone(),
-            changes: changes_summary,
-            verification,
-            artifacts: vec![journal_path.display().to_string()],
-        };
-        let path = engine::evidence::write_evidence(&evidence)?;
-        println!("evidence: {}", path.display());
+        apply_plan_and_record(&ctx, module.as_ref(), &observation, &plan)?;
     }
+    Ok(())
+}
+
+/// Applies exactly the plan an earlier `debkit apply --dry-run` staged, identified by
+/// its run ID — never a freshly (and possibly differently) recomputed one. Refuses to
+/// proceed if the system has drifted since staging: if a fresh plan is now empty,
+/// nothing needs to be done (reported as success, not an error — the system likely
+/// already converged some other way); if it's non-empty but no longer matches what
+/// was staged, that's real drift and this bails rather than silently applying a plan
+/// that no longer reflects reality.
+fn apply_from_staged_run(
+    ctx: &ModuleContext,
+    run_id: &str,
+    expected_module: Option<&str>,
+) -> anyhow::Result<()> {
+    let manifest = engine::apply::read_staged_manifest(run_id)?;
+    if let Some(expected) = expected_module
+        && expected != manifest.module
+    {
+        bail!(
+            "staged run `{run_id}` was staged for `{}`, not `{expected}`",
+            manifest.module
+        );
+    }
+    let module = modules::find(&manifest.module).with_context(|| {
+        format!(
+            "unknown module `{}` in staged run `{run_id}`",
+            manifest.module
+        )
+    })?;
+
+    println!("== {} ==", module.name());
+
+    let observation = module.discover(ctx)?;
+    let diagnosis = module.diagnose(ctx, &observation);
+    if let Some(conflict) = &diagnosis.conflict {
+        bail!(
+            "refusing to apply staged run `{run_id}`: competing owners are now active ({}); the system changed since --dry-run",
+            conflict.join(", ")
+        );
+    }
+    let fresh_plan = module.plan(ctx, &observation, &diagnosis)?;
+    if fresh_plan.is_empty() {
+        println!("already compliant; nothing to apply (staged run `{run_id}` is no longer needed)");
+        write_compliant_evidence(ctx, module.name(), &observation)?;
+        return Ok(());
+    }
+    if fresh_plan != manifest.plan {
+        bail!(
+            "staged run `{run_id}` is stale: the current plan for `{}` no longer matches what was staged. Re-run `debkit apply {} --dry-run` to refresh the preview.",
+            manifest.module,
+            manifest.module
+        );
+    }
+
+    apply_plan_and_record(ctx, module.as_ref(), &observation, &manifest.plan)
+}
+
+fn print_staged_plan(staged: &engine::apply::StagedPlan) {
+    println!(
+        "staged {} file change(s) under {} (run {})",
+        staged.files.len(),
+        staged.root.display(),
+        staged.run_id
+    );
+    println!("  manifest: {}", staged.manifest_path.display());
+    for file in &staged.files {
+        println!(
+            "  {} -> {}",
+            file.target.display(),
+            file.staged_path.display()
+        );
+        match &file.pristine_path {
+            Some(pristine) => println!("    pristine copy: {}", pristine.display()),
+            None => println!("    pristine copy: none (file didn't exist or wasn't readable)"),
+        }
+    }
+    if !staged.skipped_actions.is_empty() {
+        println!("not executed in dry-run mode (no file content to preview):");
+        for action in &staged.skipped_actions {
+            println!("  {action}");
+        }
+    }
+    println!(
+        "review, then run `debkit apply {} --from-run {}` to apply exactly this plan",
+        staged.module, staged.run_id
+    );
+}
+
+fn write_compliant_evidence(
+    ctx: &ModuleContext,
+    module_name: &str,
+    observation: &engine::module::Observation,
+) -> anyhow::Result<()> {
+    let evidence = engine::evidence::Evidence {
+        module: module_name.to_string(),
+        host: ctx.hostname.clone(),
+        status: engine::evidence::Status::Compliant,
+        owner: observation.owner.clone(),
+        observed: observation.data.clone(),
+        changes: Vec::new(),
+        verification: Vec::new(),
+        artifacts: Vec::new(),
+    };
+    let path = engine::evidence::write_evidence(&evidence)?;
+    println!("evidence: {}", path.display());
+    Ok(())
+}
+
+fn apply_plan_and_record(
+    ctx: &ModuleContext,
+    module: &dyn Module,
+    observation: &engine::module::Observation,
+    plan: &engine::plan::ChangePlan,
+) -> anyhow::Result<()> {
+    let changes_summary: Vec<engine::evidence::AppliedChangeSummary> = plan.into();
+    let applied = engine::apply::apply_plan(module.name(), &ctx.hostname, plan)?;
+    let journal_path = engine::apply::write_journal(&applied)?;
+    println!(
+        "applied {} change(s); journal: {}",
+        applied.entries.len(),
+        journal_path.display()
+    );
+
+    let verification = module.verify(ctx)?;
+    let failed: Vec<&engine::evidence::VerificationResult> = verification
+        .iter()
+        .filter(|check| check.result == engine::evidence::CheckResult::Fail)
+        .collect();
+
+    let status = if failed.is_empty() {
+        engine::evidence::Status::Changed
+    } else {
+        println!("verification failed; rolling back");
+        engine::apply::rollback(&applied)?;
+        engine::evidence::Status::Error
+    };
+
+    let evidence = engine::evidence::Evidence {
+        module: module.name().to_string(),
+        host: ctx.hostname.clone(),
+        status,
+        owner: observation.owner.clone(),
+        observed: observation.data.clone(),
+        changes: changes_summary,
+        verification,
+        artifacts: vec![journal_path.display().to_string()],
+    };
+    let path = engine::evidence::write_evidence(&evidence)?;
+    println!("evidence: {}", path.display());
     Ok(())
 }
 
@@ -1053,11 +1202,54 @@ mod tests {
             Cli::try_parse_from(["debkit", "apply", "core.inspect"])
                 .unwrap()
                 .command,
-            Commands::Apply(ModuleArgs {
+            Commands::Apply(ApplyArgs {
                 module: Some(_),
+                dry_run: false,
                 ..
             })
         ));
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "apply", "hardware.reboot", "--dry-run"])
+                .unwrap()
+                .command,
+            Commands::Apply(ApplyArgs {
+                module: Some(_),
+                dry_run: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "debkit",
+                "apply",
+                "hardware.reboot",
+                "--from-run",
+                "e4327830-23a3-4d74-be12-34016a0a71e6"
+            ])
+            .unwrap()
+            .command,
+            Commands::Apply(ApplyArgs {
+                module: Some(_),
+                from_run: Some(_),
+                dry_run: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "apply", "--from-run", "some-run-id"])
+                .unwrap()
+                .command,
+            Commands::Apply(ApplyArgs {
+                module: None,
+                from_run: Some(_),
+                ..
+            })
+        ));
+        assert!(
+            Cli::try_parse_from(["debkit", "apply", "--dry-run", "--from-run", "some-run-id"])
+                .is_err(),
+            "--dry-run and --from-run must be mutually exclusive"
+        );
         assert!(matches!(
             Cli::try_parse_from(["debkit", "verify", "core.inspect"])
                 .unwrap()
