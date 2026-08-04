@@ -48,6 +48,13 @@ pub struct BoardCompatibilityEntry {
     pub affected_bios_versions: Vec<String>,
     #[serde(default)]
     pub note: String,
+    /// This board's recommended `reboot_mode` ("cold"/"warm"), used when
+    /// `hardware_reboot.reboot_mode` isn't explicitly set in config — an explicit
+    /// config value always wins over this. Optional: not every entry needs a
+    /// recommendation (e.g. one purely documenting a known-affected BIOS version
+    /// whose real fix is a flash, not a reboot-mode change).
+    #[serde(default)]
+    pub recommended_reboot_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -130,10 +137,12 @@ impl Module for HardwareReboot {
             .as_ref()
             .is_some_and(|entry| bios_version_is_listed(dmi.bios_version.as_deref(), entry));
 
-        let desired_arg = desired_reboot_arg(
+        let effective_mode = effective_reboot_mode(
             &ctx.config.hardware_reboot.reboot_mode,
-            &ctx.config.hardware_reboot.reboot_type,
+            registry_match.as_ref(),
         );
+        let desired_arg =
+            desired_reboot_arg(&effective_mode, &ctx.config.hardware_reboot.reboot_type);
         let grub_default_current = fs::read_to_string(GRUB_DEFAULT_PATH).ok();
         let grub_default_declares_reboot_arg = grub_default_current
             .as_deref()
@@ -245,10 +254,12 @@ impl Module for HardwareReboot {
         }
 
         if needs_grub_mitigation(ctx.config.hardware_reboot.expected_memory_gib, &data) {
-            let desired_arg = desired_reboot_arg(
+            let effective_mode = effective_reboot_mode(
                 &ctx.config.hardware_reboot.reboot_mode,
-                &ctx.config.hardware_reboot.reboot_type,
+                data.registry_match.as_ref(),
             );
+            let desired_arg =
+                desired_reboot_arg(&effective_mode, &ctx.config.hardware_reboot.reboot_type);
             match data.grub_default_declares_reboot_arg {
                 Some(false) => findings.push(format!(
                     "{GRUB_DEFAULT_PATH} does not declare `reboot={desired_arg}` — a cold reboot forces full memory retraining, the actual mitigation for the findings above"
@@ -293,10 +304,12 @@ impl Module for HardwareReboot {
         if !needs_grub_mitigation(ctx.config.hardware_reboot.expected_memory_gib, &data) {
             return Ok(plan);
         }
-        let desired_arg = desired_reboot_arg(
+        let effective_mode = effective_reboot_mode(
             &ctx.config.hardware_reboot.reboot_mode,
-            &ctx.config.hardware_reboot.reboot_type,
+            data.registry_match.as_ref(),
         );
+        let desired_arg =
+            desired_reboot_arg(&effective_mode, &ctx.config.hardware_reboot.reboot_type);
 
         let needs_default_write = data.grub_default_declares_reboot_arg == Some(false)
             && data.grub_default_desired.is_some();
@@ -378,8 +391,9 @@ impl Module for HardwareReboot {
 
         let dmi = read_dmi();
         let registry = load_board_registry();
-        match dmi.find_registry_match(&registry) {
-            Some(entry) if bios_version_is_listed(dmi.bios_version.as_deref(), &entry) => {
+        let registry_match = dmi.find_registry_match(&registry);
+        match &registry_match {
+            Some(entry) if bios_version_is_listed(dmi.bios_version.as_deref(), entry) => {
                 checks.push(VerificationResult::fail(
                     "BIOS is not on this board's known-affected list",
                     format!(
@@ -398,10 +412,12 @@ impl Module for HardwareReboot {
             )),
         }
 
-        let desired_arg = desired_reboot_arg(
+        let effective_mode = effective_reboot_mode(
             &ctx.config.hardware_reboot.reboot_mode,
-            &ctx.config.hardware_reboot.reboot_type,
+            registry_match.as_ref(),
         );
+        let desired_arg =
+            desired_reboot_arg(&effective_mode, &ctx.config.hardware_reboot.reboot_type);
         let check_name = format!("{GRUB_CFG_PATH} declares reboot={desired_arg}");
         match read_grub_cfg().map(|content| grub_cfg_declares_reboot_arg(&content, &desired_arg)) {
             Some(true) => checks.push(VerificationResult::pass(check_name)),
@@ -533,6 +549,29 @@ fn desired_reboot_arg(mode: &str, kind: &str) -> String {
     } else {
         format!("{mode},{kind}")
     }
+}
+
+/// Resolves the actual `reboot_mode` to use: an explicit, non-empty
+/// `hardware_reboot.reboot_mode` in config always wins; otherwise falls back to the
+/// matched board's `recommended_reboot_mode` from the registry, if any; otherwise
+/// falls back to `DEFAULT_REBOOT_MODE` ("cold"). This is what lets the registry
+/// "just know" the right value for a recognized board without requiring the user to
+/// declare `reboot_mode` themselves, while still letting them override it explicitly
+/// if they want something different.
+fn effective_reboot_mode(
+    config_mode: &str,
+    registry_match: Option<&BoardCompatibilityEntry>,
+) -> String {
+    if !config_mode.is_empty() {
+        return config_mode.to_string();
+    }
+    if let Some(recommended) =
+        registry_match.and_then(|entry| entry.recommended_reboot_mode.as_deref())
+        && !recommended.is_empty()
+    {
+        return recommended.to_string();
+    }
+    crate::config::DEFAULT_REBOOT_MODE.to_string()
 }
 
 /// Whether either finding gives *confirmed* evidence of the specific problem the grub
@@ -682,17 +721,32 @@ fn board_registry_path(home: &Path) -> PathBuf {
         .join("registry.yaml")
 }
 
+/// Installed by the .deb package (see `Cargo.toml`'s `[package.metadata.deb]` assets
+/// and `data/boards/registry.yaml` in the repo) — ships empty deliberately, same
+/// reasoning as `embedded_board_registry`. A real entry a user verifies belongs in a
+/// PR to that file so every user with the same board benefits; a local-only entry
+/// belongs in `~/.config/debkit/boards/registry.yaml` instead, which is merged on top
+/// of this one and always wins on a conflict.
+const SYSTEM_BOARD_REGISTRY_PATH: &str = "/usr/share/debkit/boards/registry.yaml";
+
 /// Currently empty: this plan deliberately doesn't ship fabricated known-affected-BIOS
 /// data (vendor compatibility notes are the kind of thing that's easy to get wrong and
-/// costly to trust incorrectly). The mechanism is real and ready; a user who hits a
-/// specific known-bad BIOS version records it in
-/// `~/.config/debkit/boards/registry.yaml`.
+/// costly to trust incorrectly). The mechanism is real and ready — see
+/// `SYSTEM_BOARD_REGISTRY_PATH` (packaged defaults) and `board_registry_path`
+/// (per-user additions).
 fn embedded_board_registry() -> Vec<BoardCompatibilityEntry> {
     Vec::new()
 }
 
-fn load_board_registry_from_path(path: &Path) -> Vec<BoardCompatibilityEntry> {
-    let mut registry = embedded_board_registry();
+/// Merges `path`'s entries on top of `base`: same vendor+name (normalized) replaces
+/// the existing entry rather than duplicating it. A missing or unparsable file just
+/// returns `base` unchanged — a package that hasn't installed the system registry yet,
+/// or a user who's never created their own override file, are both normal states.
+fn merge_board_registry(
+    base: Vec<BoardCompatibilityEntry>,
+    path: &Path,
+) -> Vec<BoardCompatibilityEntry> {
+    let mut registry = base;
     let Ok(raw) = fs::read_to_string(path) else {
         return registry;
     };
@@ -715,10 +769,17 @@ fn load_board_registry_from_path(path: &Path) -> Vec<BoardCompatibilityEntry> {
     registry
 }
 
+/// Three tiers, each overriding the last on a vendor+name conflict: the compiled-in
+/// (empty) default, the .deb-packaged system registry, then the user's own
+/// `~/.config/debkit/boards/registry.yaml`.
 fn load_board_registry() -> Vec<BoardCompatibilityEntry> {
+    let registry = merge_board_registry(
+        embedded_board_registry(),
+        Path::new(SYSTEM_BOARD_REGISTRY_PATH),
+    );
     match crate::config::home_dir() {
-        Ok(home) => load_board_registry_from_path(&board_registry_path(&home)),
-        Err(_) => embedded_board_registry(),
+        Ok(home) => merge_board_registry(registry, &board_registry_path(&home)),
+        Err(_) => registry,
     }
 }
 
@@ -773,6 +834,7 @@ mod tests {
             name: "MAG X870E TOMAHAWK WIFI (MS-7E59)".to_string(),
             affected_bios_versions: vec![" 2.AC3 ".to_string()],
             note: "known regression".to_string(),
+            recommended_reboot_mode: None,
         };
         assert!(bios_version_is_listed(Some("2.ac3"), &entry));
         assert!(!bios_version_is_listed(Some("2.AC4"), &entry));
@@ -797,7 +859,7 @@ mod tests {
         )
         .unwrap();
 
-        let registry = load_board_registry_from_path(&path);
+        let registry = merge_board_registry(embedded_board_registry(), &path);
         assert_eq!(registry.len(), 1);
         assert_eq!(registry[0].vendor, "Micro-Star International");
         assert_eq!(registry[0].affected_bios_versions, vec!["2.AC3"]);
@@ -805,8 +867,73 @@ mod tests {
 
     #[test]
     fn registry_from_missing_path_falls_back_to_embedded() {
-        let registry = load_board_registry_from_path(Path::new("/nonexistent/registry.yaml"));
+        let registry = merge_board_registry(
+            embedded_board_registry(),
+            Path::new("/nonexistent/registry.yaml"),
+        );
         assert_eq!(registry, embedded_board_registry());
+    }
+
+    /// The packaged system registry ships defaults; a user's own file overrides them
+    /// on a matching vendor+name, exactly like `load_board_registry`'s three-tier
+    /// chain (embedded -> system -> user) is meant to behave.
+    #[test]
+    fn merge_board_registry_lets_a_later_tier_override_an_earlier_one() {
+        let dir = std::env::temp_dir().join(format!(
+            "debkit_hardware_reboot_tier_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+
+        let system_path = dir.join("system.yaml");
+        fs::write(
+            &system_path,
+            "boards:\n  - vendor: Acme\n    name: Board One\n    affected_bios_versions: [\"1.0\"]\n    note: system default\n",
+        )
+        .unwrap();
+        let user_path = dir.join("user.yaml");
+        fs::write(
+            &user_path,
+            "boards:\n  - vendor: Acme\n    name: Board One\n    affected_bios_versions: [\"1.0\", \"1.1\"]\n    note: user override\n",
+        )
+        .unwrap();
+
+        let registry = merge_board_registry(Vec::new(), &system_path);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry[0].note, "system default");
+
+        let registry = merge_board_registry(registry, &user_path);
+        assert_eq!(
+            registry.len(),
+            1,
+            "same vendor+name replaces, not duplicates"
+        );
+        assert_eq!(registry[0].note, "user override");
+        assert_eq!(
+            registry[0].affected_bios_versions,
+            vec!["1.0".to_string(), "1.1".to_string()]
+        );
+    }
+
+    /// Regression guard: the file actually shipped in the .deb
+    /// (data/boards/registry.yaml in the repo, installed to
+    /// SYSTEM_BOARD_REGISTRY_PATH) must always parse as valid `BoardRegistryFile`
+    /// YAML, even though it deliberately has zero entries.
+    #[test]
+    fn packaged_registry_file_parses_as_a_valid_empty_registry() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/boards/registry.yaml");
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        let file: BoardRegistryFile =
+            serde_yaml_ng::from_str(&raw).expect("packaged registry.yaml must be valid YAML");
+        assert!(
+            file.boards.is_empty(),
+            "packaged registry ships empty by design -- see its own header comment"
+        );
     }
 
     fn observation(data: HardwareRebootObservation) -> Observation {
@@ -866,6 +993,7 @@ mod tests {
             name: "MAG X870E TOMAHAWK WIFI (MS-7E59)".to_string(),
             affected_bios_versions: vec!["2.AC3".to_string()],
             note: "reverts EXPO profile after flash".to_string(),
+            recommended_reboot_mode: None,
         });
         let config = config(true);
         let ctx = Context {
@@ -1026,6 +1154,48 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
         assert!(!grub_cfg_declares_reboot_arg(cfg, "warm"));
     }
 
+    fn registry_entry_with_recommendation(mode: &str) -> BoardCompatibilityEntry {
+        BoardCompatibilityEntry {
+            vendor: "Micro-Star International".to_string(),
+            name: "MAG X870E TOMAHAWK WIFI (MS-7E59)".to_string(),
+            affected_bios_versions: Vec::new(),
+            note: String::new(),
+            recommended_reboot_mode: Some(mode.to_string()),
+        }
+    }
+
+    #[test]
+    fn effective_reboot_mode_uses_explicit_config_value_over_registry() {
+        let entry = registry_entry_with_recommendation("warm");
+        assert_eq!(effective_reboot_mode("cold", Some(&entry)), "cold");
+    }
+
+    #[test]
+    fn effective_reboot_mode_falls_back_to_registry_recommendation_when_config_empty() {
+        let entry = registry_entry_with_recommendation("cold");
+        assert_eq!(effective_reboot_mode("", Some(&entry)), "cold");
+    }
+
+    #[test]
+    fn effective_reboot_mode_falls_back_to_default_when_config_and_registry_are_both_empty() {
+        assert_eq!(
+            effective_reboot_mode("", None),
+            crate::config::DEFAULT_REBOOT_MODE
+        );
+
+        let entry = BoardCompatibilityEntry {
+            vendor: "Micro-Star International".to_string(),
+            name: "MAG X870E TOMAHAWK WIFI (MS-7E59)".to_string(),
+            affected_bios_versions: Vec::new(),
+            note: "known regression".to_string(),
+            recommended_reboot_mode: None,
+        };
+        assert_eq!(
+            effective_reboot_mode("", Some(&entry)),
+            crate::config::DEFAULT_REBOOT_MODE
+        );
+    }
+
     fn config_with_reboot_args(mode: &str, kind: &str) -> crate::config::DebkitConfig {
         let mut config = crate::config::DebkitConfig::default();
         config.hardware_reboot.enabled = true;
@@ -1144,6 +1314,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             name: "MAG X870E TOMAHAWK WIFI (MS-7E59)".to_string(),
             affected_bios_versions: vec!["2.AC3".to_string()],
             note: "reverts EXPO profile after flash".to_string(),
+            recommended_reboot_mode: None,
         });
         let config = config_with_reboot_args("cold", "");
         let ctx = Context {

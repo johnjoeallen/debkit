@@ -504,7 +504,7 @@ pub struct DnsConfig {
 
 pub const DEFAULT_REBOOT_MODE: &str = "cold";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HardwareRebootConfig {
     pub enabled: bool,
@@ -515,36 +515,26 @@ pub struct HardwareRebootConfig {
     /// no-`dmidecode` signal that catches a DIMM going undetected after a reboot/BIOS
     /// change, per modules::hardware_reboot.
     pub expected_memory_gib: u32,
-    /// `"cold"` or `"warm"` — the first component of the kernel's `reboot=` parameter
-    /// (see `man 2 reboot`, `LINUX_REBOOT_CMD_RESTART2`), persisted into
-    /// `/etc/default/grub`'s `GRUB_CMDLINE_LINUX_DEFAULT` so every future reboot uses
-    /// it. `"cold"` sets the BIOS cold-boot flag, forcing a full memory retrain/POST —
-    /// the actual mitigation for both this module's findings, since both stem from a
-    /// warm reboot skipping full retraining. Validated in `config::validate_config`
-    /// since it's written into a file `update-grub` sources as a shell script —
-    /// closing that injection surface matters here more than almost anywhere else in
-    /// this codebase.
-    #[serde(default = "default_reboot_mode")]
+    /// `"cold"`, `"warm"`, or empty (default — not explicitly declared). The first
+    /// component of the kernel's `reboot=` parameter (see `man 2 reboot`,
+    /// `LINUX_REBOOT_CMD_RESTART2`), persisted into `/etc/default/grub`'s
+    /// `GRUB_CMDLINE_LINUX_DEFAULT` so every future reboot uses it. `"cold"` sets the
+    /// BIOS cold-boot flag, forcing a full memory retrain/POST — the actual mitigation
+    /// for both this module's findings, since both stem from a warm reboot skipping
+    /// full retraining.
+    ///
+    /// Left empty, the effective mode falls back to the matched board's
+    /// `recommended_reboot_mode` in the board registry (see modules::hardware_reboot),
+    /// and only then to `DEFAULT_REBOOT_MODE` ("cold") if neither says anything — an
+    /// explicit value here always wins over the registry. Validated in
+    /// `config::validate_config` since it's written into a file `update-grub` sources
+    /// as a shell script — closing that injection surface matters here more than
+    /// almost anywhere else in this codebase.
     pub reboot_mode: String,
     /// Optional second component of the same `reboot=` syntax: `"bios"`, `"acpi"`,
     /// `"kbd"`, `"triple"`, `"efi"`, `"pci"`, or empty (default — let the kernel pick).
     /// Also validated.
     pub reboot_type: String,
-}
-
-fn default_reboot_mode() -> String {
-    DEFAULT_REBOOT_MODE.to_string()
-}
-
-impl Default for HardwareRebootConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            expected_memory_gib: 0,
-            reboot_mode: default_reboot_mode(),
-            reboot_type: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -250,12 +250,16 @@ debkit:
     # empty by design and lives instead at ~/.config/debkit/boards/registry.yaml,
     # matched on normalized board_vendor/board_name. A match only ever produces
     # a diagnose() finding quoting that entry's `note` -- it never triggers a
-    # BIOS flash directly. See hardware.reboot in the Module Reference for the
-    # file format.
-    # "cold" (the default) or "warm" -- the first component of the kernel's
-    # reboot= parameter (man 2 reboot, LINUX_REBOOT_CMD_RESTART2). "cold" sets
-    # the BIOS cold-boot flag, forcing full memory retraining on every reboot.
-    reboot_mode: cold
+    # BIOS flash directly. A registry entry can also carry a
+    # recommended_reboot_mode, used below when reboot_mode is left empty. See
+    # hardware.reboot in the Module Reference for the file format.
+    # "cold" or "warm" -- the first component of the kernel's reboot= parameter
+    # (man 2 reboot, LINUX_REBOOT_CMD_RESTART2). "cold" sets the BIOS cold-boot
+    # flag, forcing full memory retraining on every reboot. Empty (the default)
+    # defers to the matched registry entry's recommended_reboot_mode, if any,
+    # and only then falls back to "cold" -- an explicit value here always wins
+    # over the registry.
+    reboot_mode: ""
     # Optional second component of the same reboot= syntax: "bios", "acpi",
     # "kbd", "triple", "efi", "pci", or empty (default -- let the kernel pick).
     reboot_type: ""

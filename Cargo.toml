@@ -1,6 +1,6 @@
 [package]
 name = "debkit"
-version = "0.1.42"
+version = "0.1.43"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "DebKit CLI"
@@ -22,4 +22,5 @@ depends = []
 assets = [
     ["target/release/debkit", "usr/bin/debkit", "755"],
     ["README.md", "usr/share/doc/debkit/README.md", "644"],
+    ["data/boards/registry.yaml", "usr/share/debkit/boards/registry.yaml", "644"],
 ]

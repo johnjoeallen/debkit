@@ -15,13 +15,16 @@ on.
 **What `plan()`/`apply()` do manage** is the shared underlying mitigation for both:
 persisting `reboot_mode`/`reboot_type` into `/etc/default/grub`'s
 `GRUB_CMDLINE_LINUX_DEFAULT` and regenerating `/boot/grub/grub.cfg` via `update-grub`.
-`reboot_mode: cold` (the default) sets the kernel's `reboot=` parameter to force the
-BIOS cold-boot flag on every future reboot — both findings above stem from a *warm*
-reboot skipping full memory retraining, so declaring this is a real fix for the
-reboot-time symptom even though it can't touch the DIMM or BIOS version directly. This
-is genuinely the highest-risk write in DebKit today — a bad `/etc/default/grub` edit
-can leave a system unbootable — so both changes are `Risk::High` in `debkit plan`
-output, and the parsing that produces them is deliberately conservative (see below).
+`reboot_mode: cold` sets the kernel's `reboot=` parameter to force the BIOS cold-boot
+flag on every future reboot — both findings above stem from a *warm* reboot skipping
+full memory retraining, so declaring this is a real fix for the reboot-time symptom
+even though it can't touch the DIMM or BIOS version directly. This is genuinely the
+highest-risk write in DebKit today — a bad `/etc/default/grub` edit can leave a system
+unbootable — so both changes are `Risk::High` in `debkit plan` output, and the
+parsing that produces them is deliberately conservative (see below). This mitigation
+is only ever proposed when a finding is actually confirmed (a memory mismatch, or the
+current BIOS matching a known-affected registry entry) — enabling the module and
+declaring `reboot_mode` isn't, by itself, reason enough to touch the bootloader.
 
 Reads straight from `/sys/class/dmi/id/*` — no `dmidecode`, no root required. Missing
 individual fields, or no DMI support on the platform at all, is a normal `None`
@@ -44,10 +47,13 @@ debkit:
     # considered needed.
     expected_memory_gib: 0
     # "cold" or "warm" -- the first component of the kernel's reboot=
-    # parameter (man 2 reboot, LINUX_REBOOT_CMD_RESTART2). "cold" (the
-    # default) sets the BIOS cold-boot flag, forcing a full memory
-    # retrain/POST on every reboot.
-    reboot_mode: cold
+    # parameter (man 2 reboot, LINUX_REBOOT_CMD_RESTART2). "cold" sets the
+    # BIOS cold-boot flag, forcing a full memory retrain/POST on every
+    # reboot. Empty (the default) defers to the matched board registry
+    # entry's recommended_reboot_mode below, if any, and only then falls
+    # back to "cold" -- an explicit value here always wins over the
+    # registry.
+    reboot_mode: ""
     # Optional second component of the same reboot= syntax: "bios", "acpi",
     # "kbd", "triple", "efi", "pci", or empty (default -- let the kernel
     # pick). Rendered together as "<reboot_mode>,<reboot_type>" when both
@@ -60,9 +66,12 @@ those literal values — this file gets written into `/etc/default/grub`, which
 `update-grub` sources as a shell script, so closing that injection surface matters
 more here than almost anywhere else in this codebase.
 
-The known-affected-BIOS registry ships **deliberately empty**: fabricating
-compatibility data without verified sourcing would be worse than shipping none. The
-mechanism is real — add entries to `~/.config/debkit/boards/registry.yaml`. A match
+The known-affected-BIOS registry ships **deliberately empty** in the .deb-packaged
+system copy (`/usr/share/debkit/boards/registry.yaml`): fabricating compatibility
+data without verified sourcing would be worse than shipping none. The mechanism is
+real, and merges across three tiers — the compiled-in (empty) default, the
+.deb-packaged system registry, then `~/.config/debkit/boards/registry.yaml` — with
+each later tier overriding an earlier one on a matching `vendor`+`name`. A match
 against the current BIOS version produces a `diagnose()` finding quoting the entry's
 `note`, and — like the memory-capacity finding — contributes to whether the grub
 mitigation is needed, but never triggers a flash directly:
@@ -75,6 +84,10 @@ boards:
     # (MSI's "2.AC3", for example) aren't a consistently orderable scheme.
     affected_bios_versions: ["2.AC3"]
     note: "reverts EXPO profile after flash"
+    # Optional. Used as the effective reboot_mode when config leaves it
+    # empty -- lets a recognized board "just know" the right mitigation
+    # without the user having to declare reboot_mode themselves.
+    recommended_reboot_mode: cold
 ```
 
 ## The grub write, precisely

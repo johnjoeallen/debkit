@@ -8,8 +8,8 @@ use serde_yaml_ng::Value;
 
 use schema::DebkitConfigFile;
 pub use schema::{
-    DEFAULT_ESSENTIAL_PACKAGES, DebkitConfig, DnsConfig, EssentialsConfig, GitConfig, LinkEntry,
-    NisConfig, SudoNopassConfig, WakeOnLanConfig,
+    DEFAULT_ESSENTIAL_PACKAGES, DEFAULT_REBOOT_MODE, DebkitConfig, DnsConfig, EssentialsConfig,
+    GitConfig, LinkEntry, NisConfig, SudoNopassConfig, WakeOnLanConfig,
 };
 
 pub fn load_or_init() -> anyhow::Result<DebkitConfig> {
@@ -245,8 +245,11 @@ fn validate_config(config: &DebkitConfig) -> anyhow::Result<()> {
     ) {
         bail!("`hardware_sleep.desired_mem_sleep` must be one of `s2idle`, `deep`, or empty");
     }
-    if !matches!(config.hardware_reboot.reboot_mode.as_str(), "cold" | "warm") {
-        bail!("`hardware_reboot.reboot_mode` must be one of `cold` or `warm`");
+    if !matches!(
+        config.hardware_reboot.reboot_mode.as_str(),
+        "" | "cold" | "warm"
+    ) {
+        bail!("`hardware_reboot.reboot_mode` must be one of `cold`, `warm`, or empty");
     }
     if !matches!(
         config.hardware_reboot.reboot_type.as_str(),
