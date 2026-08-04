@@ -319,7 +319,7 @@ impl Module for HardwareReboot {
         }
 
         let Some(update_grub) =
-            resolve_command(&["update-grub", "/usr/sbin/update-grub", "/sbin/update-grub"])
+            resolve_command(&["/usr/sbin/update-grub", "/sbin/update-grub", "update-grub"])
         else {
             // No update-grub on this host -- not a GRUB-managed boot setup DebKit
             // can act on. Writing /etc/default/grub with nothing to regenerate it
@@ -712,8 +712,14 @@ fn grub_cfg_declares_reboot_arg(grub_cfg: &str, desired_arg: &str) -> bool {
 
 /// `update-grub` lives in `/usr/sbin`, which typically isn't on a regular user's
 /// `PATH` on Debian — same footgun `network.firewall` hit with `iptables`/`nft`.
-/// Tries the bare name first (respects `PATH` if it does include sbin), then the
-/// well-known absolute paths.
+/// Callers should list well-known absolute paths *before* the bare name: a bare-name
+/// `PATH` lookup can resolve differently depending on who's running it (this module's
+/// own `--dry-run`/`--from-run` pair is a real example — staging typically runs
+/// unprivileged, with a `PATH` that excludes `/usr/sbin`, while promoting typically
+/// runs under `sudo`, whose `secure_path` includes it), which would make the exact
+/// same real command resolve to two different `Change` values and spuriously fail
+/// the plan-freshness check `--from-run` relies on. Absolute-path candidates are a
+/// plain filesystem check, so they resolve identically no matter who's asking.
 fn resolve_command(candidates: &[&'static str]) -> Option<&'static str> {
     candidates.iter().copied().find(|candidate| {
         if candidate.starts_with('/') {
