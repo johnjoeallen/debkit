@@ -240,12 +240,25 @@ pub struct StagedFile {
 #[derive(Debug, Clone)]
 pub struct StagedPlan {
     pub run_id: String,
+    pub module: String,
     pub root: PathBuf,
+    pub manifest_path: PathBuf,
     pub files: Vec<StagedFile>,
     /// Non-`WriteFile` changes (`RunCommand`/`ServiceAction`/`InstallPackages`) a
     /// real `apply` would also perform, rendered for visibility — dry-run never
     /// executes any of them, since there's no file content to preview for a command.
     pub skipped_actions: Vec<String>,
+}
+
+/// Persisted at `<run-root>/plan.json` by every `stage_plan` call, and read back by
+/// `debkit apply --from-run <uuid>` to replay the exact plan that was staged — not a
+/// freshly (and possibly differently) recomputed one. `module`/`host` let promotion
+/// sanity-check the run against what the caller expects before touching anything.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StagedManifest {
+    pub module: String,
+    pub host: String,
+    pub plan: ChangePlan,
 }
 
 /// `/tmp/debkit` by default; overridable via `DEBKIT_STAGE_DIR` so tests never touch
@@ -273,14 +286,19 @@ pub fn staging_root() -> PathBuf {
 /// same assumption `apply_change`'s pre-change snapshot already makes via
 /// `exec::read_file_if_exists`) — so previewing a change never itself requires root,
 /// even for a change that would need it to actually apply.
-pub fn stage_plan(plan: &ChangePlan) -> anyhow::Result<StagedPlan> {
-    stage_plan_under(&staging_root(), plan)
+pub fn stage_plan(module: &str, host: &str, plan: &ChangePlan) -> anyhow::Result<StagedPlan> {
+    stage_plan_under(&staging_root(), module, host, plan)
 }
 
 /// Pulled out of `stage_plan` so tests can target a temp directory instead of the
 /// real `staging_root()` — avoids both touching `/tmp/debkit` for real during tests
 /// and the parallel-test races an env-var-based override would risk.
-fn stage_plan_under(base: &Path, plan: &ChangePlan) -> anyhow::Result<StagedPlan> {
+fn stage_plan_under(
+    base: &Path,
+    module: &str,
+    host: &str,
+    plan: &ChangePlan,
+) -> anyhow::Result<StagedPlan> {
     let run_id = uuid::Uuid::new_v4().to_string();
     let root = base.join(&run_id);
     let changes_root = root.join("changes");
@@ -321,12 +339,42 @@ fn stage_plan_under(base: &Path, plan: &ChangePlan) -> anyhow::Result<StagedPlan
         }
     }
 
+    let manifest = StagedManifest {
+        module: module.to_string(),
+        host: host.to_string(),
+        plan: plan.clone(),
+    };
+    let manifest_path = root.join("plan.json");
+    let rendered =
+        serde_json::to_string_pretty(&manifest).context("failed to serialize staged plan")?;
+    if let Some(parent) = manifest_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(&manifest_path, rendered)
+        .with_context(|| format!("failed to write {}", manifest_path.display()))?;
+
     Ok(StagedPlan {
         run_id,
+        module: module.to_string(),
         root,
+        manifest_path,
         files,
         skipped_actions,
     })
+}
+
+/// Reads back the manifest a `stage_plan` call wrote for `run_id`, for `debkit apply
+/// --from-run`.
+pub fn read_staged_manifest(run_id: &str) -> anyhow::Result<StagedManifest> {
+    let path = staging_root().join(run_id).join("plan.json");
+    let raw = fs::read_to_string(&path).with_context(|| {
+        format!(
+            "failed to read {} (was `{run_id}` created by `debkit apply --dry-run`?)",
+            path.display()
+        )
+    })?;
+    serde_json::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 /// Joins `target` (always an absolute path, e.g. `/etc/default/grub`) onto `root`,
@@ -461,7 +509,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, &plan).unwrap();
+        let staged = stage_plan_under(&base, "hardware.reboot", "devbox", &plan).unwrap();
         assert_eq!(staged.files.len(), 1);
         let file = &staged.files[0];
         assert_eq!(file.target, target);
@@ -487,7 +535,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, &plan).unwrap();
+        let staged = stage_plan_under(&base, "hardware.reboot", "devbox", &plan).unwrap();
         let file = &staged.files[0];
         let pristine_path = file.pristine_path.as_ref().expect("target existed");
         assert_eq!(fs::read_to_string(pristine_path).unwrap(), "original\n");
@@ -528,7 +576,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, &plan).unwrap();
+        let staged = stage_plan_under(&base, "hardware.reboot", "devbox", &plan).unwrap();
         assert!(staged.files.is_empty());
         assert_eq!(staged.skipped_actions.len(), 3);
         assert!(staged.skipped_actions[0].contains("update-grub"));
@@ -553,7 +601,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, &plan).unwrap();
+        let staged = stage_plan_under(&base, "hardware.reboot", "devbox", &plan).unwrap();
         assert!(staged.root.starts_with(&base));
         assert!(staged.root.ends_with(&staged.run_id));
         let file = &staged.files[0];
@@ -570,9 +618,41 @@ mod tests {
     fn two_stage_plan_runs_get_different_run_ids() {
         let base = temp_dir("stage_unique_run_ids");
         let plan = ChangePlan::new();
-        let first = stage_plan_under(&base, &plan).unwrap();
-        let second = stage_plan_under(&base, &plan).unwrap();
+        let first = stage_plan_under(&base, "hardware.reboot", "devbox", &plan).unwrap();
+        let second = stage_plan_under(&base, "hardware.reboot", "devbox", &plan).unwrap();
         assert_ne!(first.run_id, second.run_id);
+    }
+
+    #[test]
+    fn stage_plan_writes_a_manifest_that_round_trips_the_full_plan() {
+        let base = temp_dir("stage_manifest_round_trip");
+        let target = base.join("target.conf");
+        let mut plan = ChangePlan::new();
+        plan.push(
+            "write target.conf",
+            Risk::High,
+            Change::WriteFile {
+                path: target,
+                content: "hello\n".to_string(),
+            },
+        );
+        plan.push(
+            "restart dnsmasq",
+            Risk::Medium,
+            Change::ServiceAction {
+                unit: "dnsmasq".to_string(),
+                action: crate::engine::plan::ServiceActionKind::Restart,
+            },
+        );
+
+        let staged = stage_plan_under(&base, "network.dns", "devbox", &plan).unwrap();
+        assert!(staged.manifest_path.exists());
+
+        let raw = fs::read_to_string(&staged.manifest_path).unwrap();
+        let manifest: StagedManifest = serde_json::from_str(&raw).unwrap();
+        assert_eq!(manifest.module, "network.dns");
+        assert_eq!(manifest.host, "devbox");
+        assert_eq!(manifest.plan, plan);
     }
 
     #[test]

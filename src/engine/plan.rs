@@ -20,7 +20,8 @@ impl Risk {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ServiceActionKind {
     EnableNow,
     Restart,
@@ -37,7 +38,12 @@ impl ServiceActionKind {
 
 /// A single system mutation a module wants to make. The engine (`engine::apply`) knows
 /// how to render, apply, and reverse each variant without module-specific code.
-#[derive(Debug, Clone)]
+///
+/// `PartialEq`/`Serialize`/`Deserialize` exist for `debkit apply --from-run`: a staged
+/// plan is persisted as JSON so it can be replayed later, and comparing it against a
+/// freshly-computed plan is how promotion detects the system drifted since the dry
+/// run — see `engine::apply::apply_from_staged_run`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Change {
     WriteFile {
         path: PathBuf,
@@ -64,7 +70,7 @@ pub enum Change {
 }
 
 /// One planned change plus the human-facing description and risk shown in dry-run output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannedChange {
     pub description: String,
     pub risk: Risk,
@@ -73,7 +79,7 @@ pub struct PlannedChange {
 
 /// The ordered set of changes a module's `plan()` wants to apply. An empty plan means the
 /// module is already compliant (idempotent no-op).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangePlan {
     pub changes: Vec<PlannedChange>,
 }
