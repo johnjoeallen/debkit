@@ -190,8 +190,8 @@ debkit:
         name: lan0
 
   tailscale:
-    # not installed on that machine -- diagnose()/plan() report compliant while
-    # disabled, regardless of what discover() observes.
+    # not installed here -- diagnose()/plan() report compliant while disabled,
+    # regardless of what discover() observes.
     enabled: false
     # Informational only -- surfaced in the Observation as context, never
     # enforced (mapping this onto `tailscale set --accept-dns=...` isn't
@@ -201,7 +201,7 @@ debkit:
     preserve_lan_dns: true
 
   dns:
-    # that machine's resolv.conf is NetworkManager-owned, not dnsmasq -- left disabled.
+    # resolv.conf here is NetworkManager-owned, not dnsmasq -- left disabled.
     enabled: false
     # Only "dnsmasq" is declaratively managed today. Any other value (or empty)
     # means "diagnose only, never touch anything."
