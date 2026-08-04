@@ -30,6 +30,10 @@ impl Module for AptRepositories {
         "apt.repositories"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("apt")
+    }
+
     fn description(&self) -> &'static str {
         "apt-cacher-ng proxy config and DIRECT-bypass exceptions"
     }

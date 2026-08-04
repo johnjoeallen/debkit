@@ -17,10 +17,13 @@ debkit inspect               # discover observed state for every module
 debkit diagnose core.inspect  # discover + compare a single module against config
 ```
 
-See [`config.example.yaml`](./config.example.yaml) for a fully commented reference
-config, or the [docs site](https://johnjoeallen.github.io/debkit/) for the complete
-CLI reference, module catalogue, and per-feature guides (NIS, Wake-on-LAN, passwordless
-sudo).
+Installing the `.deb` provisions `/etc/debkit/config.yaml` (machine-wide config,
+straight from [`config.example.yaml`](./config.example.yaml)) as the base of the merge
+chain, with `~/.config/debkit/config.yaml` and the per-host overlay above layered on
+top of it. See [`config.example.yaml`](./config.example.yaml) for a fully commented
+reference config, or the [docs site](https://johnjoeallen.github.io/debkit/) for the
+complete CLI reference, module catalogue, and per-feature guides (NIS, Wake-on-LAN,
+passwordless sudo).
 
 ## Building the docs locally
 

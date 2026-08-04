@@ -24,6 +24,8 @@ enum Commands {
     Configure(ConfigureCommand),
     #[command(about = "Create or update the current host override config")]
     HostConfig,
+    #[command(about = "Set `enabled: true` for a module's section in the local config")]
+    Enable(EnableArgs),
     #[command(about = "List installable DebKit targets")]
     List,
     #[command(about = "Build DebKit packages")]
@@ -48,6 +50,12 @@ enum Commands {
     Rollback(RollbackArgs),
     #[command(about = "Show the most recently recorded evidence for a module (or every module)")]
     History(ModuleArgs),
+}
+
+#[derive(Debug, Args)]
+struct EnableArgs {
+    /// Dotted module name, e.g. `hardware.grub`.
+    module: String,
 }
 
 #[derive(Debug, Args)]
@@ -247,6 +255,9 @@ fn run() -> anyhow::Result<()> {
     match cli.command {
         Commands::HostConfig => {
             write_host_config()?;
+        }
+        Commands::Enable(args) => {
+            run_enable(&args.module)?;
         }
         Commands::Configure(configure) => match configure.command {
             ConfigureSubcommand::HostConfig => {
@@ -856,6 +867,33 @@ fn write_host_config() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `debkit enable <module>` — a shortcut for hand-editing
+/// `~/.config/debkit/config.yaml` to flip a module's gate on. Only meaningful for
+/// modules with a plain `enabled: bool` gate (see `Module::config_key`); modules
+/// gated some other way (`identity.pam`) or with no config section at all
+/// (`core.inspect`, `network.dhcp`, ...) have nothing here for it to set.
+fn run_enable(module_name: &str) -> anyhow::Result<()> {
+    let module = modules::find(module_name)
+        .with_context(|| format!("unknown module `{module_name}` (see `debkit list`)"))?;
+    let section = module.config_key().with_context(|| {
+        format!(
+            "module `{module_name}` has no `enabled` flag to set (either diagnostic-only or gated some other way — see the Module Reference)"
+        )
+    })?;
+
+    let home = config::home_dir()?;
+    let result = config::enable_section_for_home(&home, section)?;
+    if result.changed {
+        println!("Set `{section}.enabled: true` in {}", result.path.display());
+    } else {
+        println!(
+            "`{section}.enabled` was already `true` in {}",
+            result.path.display()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,6 +1127,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_enable() {
+        let cli = Cli::try_parse_from(["debkit", "enable", "hardware.grub"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Enable(EnableArgs { module }) if module == "hardware.grub"
+        ));
+    }
+
+    #[test]
     fn parses_uninstall_codex() {
         let cli = Cli::try_parse_from(["debkit", "uninstall", "codex"]).unwrap();
         assert!(matches!(
@@ -1209,7 +1256,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            Cli::try_parse_from(["debkit", "apply", "hardware.reboot", "--dry-run"])
+            Cli::try_parse_from(["debkit", "apply", "hardware.grub", "--dry-run"])
                 .unwrap()
                 .command,
             Commands::Apply(ApplyArgs {
@@ -1222,7 +1269,7 @@ mod tests {
             Cli::try_parse_from([
                 "debkit",
                 "apply",
-                "hardware.reboot",
+                "hardware.grub",
                 "--from-run",
                 "e4327830-23a3-4d74-be12-34016a0a71e6"
             ])

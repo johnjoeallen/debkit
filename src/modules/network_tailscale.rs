@@ -38,6 +38,10 @@ impl Module for NetworkTailscale {
         "network.tailscale"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("tailscale")
+    }
+
     fn description(&self) -> &'static str {
         "read-only Tailscale backend/DNS status via `tailscale status --json`"
     }

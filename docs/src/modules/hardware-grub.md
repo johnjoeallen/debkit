@@ -1,4 +1,4 @@
-# hardware.reboot
+# hardware.grub
 
 Board/BIOS identification scoped narrowly to detection + normalization + a
 known-affected-BIOS lookup — not a general hardware compatibility matcher. Motivated
@@ -37,7 +37,7 @@ whitespace-collapsed, and stripped of common vendor-suffix noise (`Co., Ltd.`,
 
 ```yaml
 debkit:
-  hardware_reboot:
+  hardware_grub:
     enabled: false
     # Declared installed RAM, in GiB, rounded to the nearest common size (8,
     # 16, 32, 64, 96, 128, ...). 0 (the default) means "not declared, don't
@@ -62,23 +62,42 @@ debkit:
     # pick). Rendered together as "<reboot_mode>,<reboot_type>" when both
     # are set, or just reboot_mode alone when reboot_type is empty.
     reboot_type: ""
+    # Boot-time display resolution, set into GRUB_GFXMODE (the GRUB menu's
+    # own resolution) and GRUB_GFXPAYLOAD_LINUX (the resolution handed to
+    # the kernel/KMS at boot) -- both from this one value, kept in sync.
+    # Simple "<columns>x<rows>" form, e.g. "1024x768", or empty (default --
+    # not declared). Unlike reboot_mode, this has no confirmed-evidence
+    # gate: declaring it is itself the instruction to apply it. See
+    # "video_mode values" below.
+    video_mode: ""
+    # Seconds GRUB waits at the boot menu before booting the default entry,
+    # set into the standalone GRUB_TIMEOUT line. null/unset (the default)
+    # means "not declared, don't touch it." Like video_mode, this has no
+    # confirmed-evidence gate: declaring it is itself the instruction to
+    # apply it. 0 is a legitimate, distinct value (skip the menu delay
+    # entirely), not the same as leaving this unset.
+    timeout: null
 ```
 
-Both `reboot_mode` and `reboot_type` are validated at config load against exactly
-those literal values — this file gets written into `/etc/default/grub`, which
-`update-grub` sources as a shell script, so closing that injection surface matters
-more here than almost anywhere else in this codebase.
+`reboot_mode`, `reboot_type`, and `video_mode` are all validated at config load
+against exactly those literal shapes — this file gets written into
+`/etc/default/grub`, which `update-grub` sources as a shell script, so closing that
+injection surface matters more here than almost anywhere else in this codebase.
 
 The known-affected-BIOS registry is deliberately conservative about what ships in
 the .deb-packaged system copy (`/usr/share/debkit/boards/registry.yaml`):
 fabricating compatibility data without verified sourcing would be worse than
 shipping none, so it only ever grows entries with real, verified sourcing. It
 merges across three tiers — the compiled-in (empty) default, the
-.deb-packaged system registry, then `~/.config/debkit/boards/registry.yaml` — with
-each later tier overriding an earlier one on a matching `vendor`+`name`. A match
-against the current BIOS version produces a `diagnose()` finding quoting the entry's
-`note`, and — like the memory-capacity finding — contributes to whether the grub
-mitigation is needed, but never triggers a flash directly:
+.deb-packaged system registry, then `/etc/debkit/boards/registry.yaml` — with
+each later tier overriding an earlier one on a matching `vendor`+`name`. The local
+tier is deliberately machine-wide rather than per-user (which BIOS versions are
+known-bad on a board has nothing to do with which Unix user runs `debkit`), and is
+itself packaged as a dpkg conffile — `apt install`/upgrade provisions it and
+preserves local edits — so there's nothing to hand-create. A match against the
+current BIOS version produces a `diagnose()` finding quoting the entry's `note`, and
+— like the memory-capacity finding — contributes to whether the grub mitigation is
+needed, but never triggers a flash directly:
 
 ```yaml
 boards:
@@ -94,30 +113,63 @@ boards:
     recommended_reboot_mode: cold
 ```
 
+## `video_mode` values
+
+`video_mode` drives GRUB's own display-resolution mechanism, not the kernel's legacy
+`vga=` boot parameter (raw VESA mode numbers, embedded in
+`GRUB_CMDLINE_LINUX_DEFAULT` alongside `reboot=`). Instead it sets two standalone
+`/etc/default/grub` lines from one value, kept in sync:
+
+- **`GRUB_GFXMODE`** — the resolution of the GRUB menu itself, before the kernel even
+  loads.
+- **`GRUB_GFXPAYLOAD_LINUX`** — the resolution handed to the kernel/KMS framebuffer
+  when it boots.
+
+The only accepted form (enforced by `config::validate_config`) is
+`"<columns>x<rows>"` — both components plain positive-integer pixel counts, e.g.
+`"1024x768"` or `"1920x1080"`. No VESA mode numbers, no depth suffix, no GRUB special
+words (`auto`/`keep`/`text`) — deliberately the simplest form that covers the common
+case; if you need one of those, set them by hand in `/etc/default/grub` instead of
+through `video_mode`.
+
 ## The grub write, precisely
 
-`plan()` checks two things independently, and only proceeds if `update-grub` is
-actually resolvable on the host (checked against `PATH` and the well-known
-`/usr/sbin`/`/sbin` locations, since it's rarely on a regular user's `PATH`):
+`plan()` checks each of the four independent grub settings on its own (`reboot=` —
+gated on confirmed evidence, see above — and `GRUB_GFXMODE`/`GRUB_GFXPAYLOAD_LINUX`/
+`GRUB_TIMEOUT` — each gated purely on whether `video_mode`/`timeout` is declared), and
+only proceeds if
+`update-grub` is actually resolvable on the host (checked against `PATH` and the
+well-known `/usr/sbin`/`/sbin` locations, since it's rarely on a regular user's
+`PATH`):
 
-1. **Source**: does `/etc/default/grub`'s `GRUB_CMDLINE_LINUX_DEFAULT="..."` line
-   already contain a `reboot=<mode>[,<type>]` token *anywhere* in its value (not just
-   at the end)? If not, a `WriteFile` change patches just that one line — every other
-   line, including a separate active `GRUB_CMDLINE_LINUX="..."` line (no `_DEFAULT`,
-   a different variable entirely, and a real shape this parser was built and tested
-   against), is left untouched. If the file doesn't contain a recognizable
+1. **Source**, `reboot=`: does `/etc/default/grub`'s `GRUB_CMDLINE_LINUX_DEFAULT="..."`
+   line already contain the token *anywhere* in its value (not just at the end)? If
+   not, the patch replaces just that one line's value — every other line, including a
+   separate active `GRUB_CMDLINE_LINUX="..."` line (no `_DEFAULT`, a different
+   variable entirely, and a real shape this parser was built and tested against), is
+   left untouched. If the file doesn't contain a recognizable
    `GRUB_CMDLINE_LINUX_DEFAULT="..."` line at all, this module refuses to guess and
    surfaces a warning instead.
-2. **Effective**: does the already-generated `/boot/grub/grub.cfg` reflect the
-   desired token? This catches the case where someone hand-edited `/etc/default/grub`
-   without running `update-grub` afterward. `/boot/grub/grub.cfg` is commonly
-   root-only (`0600`) — when it can't be read, this check is skipped rather than
-   treated as a mismatch, and `debkit verify`/`apply` (which do run privileged) are
-   what actually confirm it.
+2. **Source**, `GRUB_GFXMODE`/`GRUB_GFXPAYLOAD_LINUX`/`GRUB_TIMEOUT`: does an *active*
+   (non-commented) line for each key already declare the desired value? These are
+   simple standalone `KEY=value` lines, not tokens inside a quoted multi-value string,
+   so there's no "unfamiliar layout" ambiguity to refuse: if an active line exists,
+   its value is replaced; if not — the normal state, since Debian's stock template
+   ships these commented out or omits them entirely — a fresh line is appended. A
+   commented example line (`#GRUB_GFXMODE=640x480`) is always left alone.
+3. **Effective**: does the already-generated `/boot/grub/grub.cfg` reflect each
+   desired value (`reboot=<mode>`, `gfxmode=<mode>`, `gfxpayload=<mode>`,
+   `timeout=<seconds>`)? This catches the case where someone hand-edited
+   `/etc/default/grub` without running `update-grub` afterward. `/boot/grub/grub.cfg`
+   is commonly root-only (`0600`) — when it can't be read, this check is skipped
+   rather than treated as a mismatch, and `debkit verify`/`apply` (which do run
+   privileged) are what actually confirm it.
 
-Whenever either is stale, `plan()` includes a `RunCommand` for `update-grub` to
-regenerate the effective config — writing the source without ever regenerating it
-would leave a misleading half-applied state.
+All four edits — `reboot=`, `GRUB_GFXMODE`, `GRUB_GFXPAYLOAD_LINUX`, `GRUB_TIMEOUT` —
+land in a single `/etc/default/grub` `WriteFile` per `plan()` run rather than
+separate writes. Whenever any of the four is stale, `plan()` includes a `RunCommand`
+for `update-grub` to regenerate the effective config — writing the source without
+ever regenerating it would leave a misleading half-applied state.
 
 Rollback reverses the `WriteFile` automatically (the prior `/etc/default/grub`
 content is restored). The `update-grub` regeneration itself is recorded as `Manual` —

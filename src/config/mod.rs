@@ -69,6 +69,63 @@ pub fn add_nis_slave_to_host_for_home(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnableSectionResult {
+    pub path: PathBuf,
+    pub changed: bool,
+}
+
+/// Sets `debkit.<section>.enabled: true` in the per-user base config
+/// (`~/.config/debkit/config.yaml`, i.e. `config_path_for_home`) — the target for
+/// `debkit enable <module>`. `section` is a raw config-schema key (e.g.
+/// `"hardware_grub"`), already resolved from a module's dotted name by the caller
+/// (see `Module::config_key`) — this function doesn't know about modules at all, only
+/// the raw YAML shape, matching `add_nis_slave_to_raw_config`'s layering. Creates the
+/// file (and its parent directory) if it doesn't exist yet, and creates the section
+/// mapping if the file exists but doesn't mention it. Like `add_nis_slave_to_host`,
+/// re-serializes the whole parsed document rather than patching text in place, so
+/// pre-existing comments in the file are not preserved.
+pub fn enable_section_for_home(home: &Path, section: &str) -> anyhow::Result<EnableSectionResult> {
+    let path = config_path_for_home(home);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let raw = if path.exists() {
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    let mut value = parse_yaml(&raw)?;
+    let debkit = ensure_mapping_key(&mut value, "debkit");
+    let section_map = ensure_mapping_key(debkit, section);
+    let enabled_key = Value::String("enabled".to_string());
+
+    if matches!(
+        section_map.as_mapping().and_then(|m| m.get(&enabled_key)),
+        Some(Value::Bool(true))
+    ) {
+        return Ok(EnableSectionResult {
+            path,
+            changed: false,
+        });
+    }
+
+    section_map
+        .as_mapping_mut()
+        .expect("ensure_mapping_key returns a mapping")
+        .insert(enabled_key, Value::Bool(true));
+
+    let rendered =
+        serde_yaml_ng::to_string(&value).context("failed to serialize updated config")?;
+    fs::write(&path, rendered).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(EnableSectionResult {
+        path,
+        changed: true,
+    })
+}
+
 fn load_for_home_and_hostname(home: &Path, hostname: &str) -> anyhow::Result<DebkitConfig> {
     let merged = merged_value_for_home_and_hostname(home, hostname)?;
     let mut config = deserialize_config(merged)?;
@@ -105,19 +162,28 @@ pub fn configure_complete_for_home(home: &Path) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+/// The `/etc/debkit/config.yaml` global tier: packaged by the `.deb` (as a dpkg
+/// conffile, from `config.example.yaml`) and the base of the merge chain below. DebKit
+/// is mostly not a per-user tool -- most module config (hardware, network, identity,
+/// apt, pam, systemd) describes the machine, not the operator running it -- so this is
+/// where that belongs. It's purely optional at read time: a missing file is "no
+/// global overrides," never an error, exactly like a missing host overlay today.
+/// Deliberately never auto-created by DebKit itself (see `load_or_init_for_home`'s doc
+/// comment) -- provisioning it is the package's job.
+const GLOBAL_CONFIG_PATH: &str = "/etc/debkit/config.yaml";
+
+/// Unlike `configure_complete_for_home` (the explicit, opt-in `debkit host-config`
+/// path, which still writes a full default `config.yaml` on request), this no longer
+/// auto-writes one as a side effect of a passive read. It used to: before the global
+/// tier existed, an implicitly-created full-default per-user file was harmless. Now
+/// that `/etc/debkit/config.yaml` is packaged and present on a normal install, writing
+/// a complete per-user dump the first time *any* command ran would immediately shadow
+/// every key in the global file for that user, forever -- defeating the global tier
+/// entirely. A missing `~/.config/debkit/config.yaml` is simply "no per-user
+/// overrides," same as a missing host overlay; every field still has an in-code
+/// default either way.
 pub fn load_or_init_for_home(home: &Path) -> anyhow::Result<DebkitConfig> {
     let hostname = current_hostname().unwrap_or_else(|_| schema::DEFAULT_HOST_NAME.to_string());
-    let path = config_path_for_home(home);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-
-    if !path.exists() {
-        let default_cfg = DebkitConfig::for_hostname(&hostname);
-        fs::write(&path, serialize_config(&default_cfg)?)
-            .with_context(|| format!("failed to write {}", path.display()))?;
-    }
 
     let merged = merged_value_for_home_and_hostname(home, &hostname)?;
     let mut config = deserialize_config(merged)?;
@@ -131,25 +197,33 @@ pub fn load_or_init_for_home(home: &Path) -> anyhow::Result<DebkitConfig> {
     Ok(config)
 }
 
-/// Loads the base config as a `serde_yaml` value and, if a host override exists, deep-merges
-/// it on top. Any key present in the host file wins; anything the host file doesn't mention
-/// falls through to the base value untouched. This replaces v1's hand-maintained
+/// Deep-merges three optional YAML tiers, lowest to highest priority: the global
+/// `/etc/debkit/config.yaml`, the per-user base config, then the per-user host
+/// overlay. Any key present in a higher tier wins; anything it doesn't mention falls
+/// through to the tier below untouched. This replaces v1's hand-maintained
 /// `MissingKeys`/`apply_host_overlay` pair with one generic merge.
 fn merged_value_for_home_and_hostname(home: &Path, hostname: &str) -> anyhow::Result<Value> {
-    let base_path = config_path_for_home(home);
-    let base_raw = fs::read_to_string(&base_path)
-        .with_context(|| format!("failed to read {}", base_path.display()))?;
-    let mut merged = parse_yaml(&base_raw)?;
+    merged_value(Path::new(GLOBAL_CONFIG_PATH), home, hostname)
+}
 
-    let host_path = host_config_path_for_home(home, hostname);
-    if host_path.exists() {
-        let host_raw = fs::read_to_string(&host_path)
-            .with_context(|| format!("failed to read {}", host_path.display()))?;
-        let overlay = parse_yaml(&host_raw)?;
-        merged = merge_values(merged, overlay);
-    }
-
+fn merged_value(global_path: &Path, home: &Path, hostname: &str) -> anyhow::Result<Value> {
+    let mut merged = Value::Mapping(Default::default());
+    merged = merge_optional_yaml(merged, global_path)?;
+    merged = merge_optional_yaml(merged, &config_path_for_home(home))?;
+    merged = merge_optional_yaml(merged, &host_config_path_for_home(home, hostname))?;
     Ok(merged)
+}
+
+/// Merges `path`'s parsed YAML on top of `base` if it exists; otherwise returns `base`
+/// unchanged. A missing file at any tier is a normal "nothing declared here," never an
+/// error -- only an existing-but-unreadable-or-invalid file is.
+fn merge_optional_yaml(base: Value, path: &Path) -> anyhow::Result<Value> {
+    if !path.exists() {
+        return Ok(base);
+    }
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(merge_values(base, parse_yaml(&raw)?))
 }
 
 fn deserialize_config(value: Value) -> anyhow::Result<DebkitConfig> {
@@ -289,20 +363,44 @@ fn validate_config(config: &DebkitConfig) -> anyhow::Result<()> {
         bail!("`hardware_sleep.desired_mem_sleep` must be one of `s2idle`, `deep`, or empty");
     }
     if !matches!(
-        config.hardware_reboot.reboot_mode.as_str(),
+        config.hardware_grub.reboot_mode.as_str(),
         "" | "cold" | "warm"
     ) {
-        bail!("`hardware_reboot.reboot_mode` must be one of `cold`, `warm`, or empty");
+        bail!("`hardware_grub.reboot_mode` must be one of `cold`, `warm`, or empty");
     }
     if !matches!(
-        config.hardware_reboot.reboot_type.as_str(),
+        config.hardware_grub.reboot_type.as_str(),
         "" | "bios" | "acpi" | "kbd" | "triple" | "efi" | "pci"
     ) {
         bail!(
-            "`hardware_reboot.reboot_type` must be one of `bios`, `acpi`, `kbd`, `triple`, `efi`, `pci`, or empty"
+            "`hardware_grub.reboot_type` must be one of `bios`, `acpi`, `kbd`, `triple`, `efi`, `pci`, or empty"
         );
     }
+    if !is_valid_video_mode(config.hardware_grub.video_mode.as_str()) {
+        bail!("`hardware_grub.video_mode` must be `<columns>x<rows>` (e.g. `1024x768`) or empty");
+    }
     Ok(())
+}
+
+/// `video_mode` sets GRUB_GFXMODE/GRUB_GFXPAYLOAD_LINUX in /etc/default/grub (see
+/// modules::hardware_grub), in the simple `<columns>x<rows>` form rather than a raw
+/// resolution/depth mode number -- both components must be plain positive-integer
+/// pixel counts. Same shell-injection reasoning as `reboot_mode`/`reboot_type`: this
+/// value is written into a file `update-grub` sources as a shell script.
+fn is_valid_video_mode(value: &str) -> bool {
+    if value.is_empty() {
+        return true;
+    }
+    let Some((columns, rows)) = value.split_once('x') else {
+        return false;
+    };
+    is_positive_pixel_count(columns) && is_positive_pixel_count(rows)
+}
+
+fn is_positive_pixel_count(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|c| c.is_ascii_digit())
+        && value.parse::<u32>().is_ok_and(|n| n > 0)
 }
 
 fn current_hostname() -> anyhow::Result<String> {
@@ -450,8 +548,13 @@ mod tests {
         assert_eq!(config.wake_on_lan.reference_host, config.host.name);
         assert!(config.wake_on_lan.interfaces_auto);
 
+        // Unlike v1 (and unlike this project's own pre-global-config-tier
+        // behavior), a passive read no longer auto-writes a config.yaml -- doing so
+        // would permanently shadow the global /etc/debkit/config.yaml tier for this
+        // user. Every field still has an in-code default, so a fully absent config
+        // tree is a normal, supported state.
         let config_path = config_path_for_home(&home);
-        assert!(config_path.exists());
+        assert!(!config_path.exists());
     }
 
     #[test]
@@ -518,6 +621,135 @@ mod tests {
     }
 
     #[test]
+    fn global_config_supplies_a_value_when_user_and_host_files_are_absent() {
+        let home = temp_home("global_only");
+        let hostname = current_hostname().unwrap();
+        let global_dir = temp_home("global_only_etc");
+        let global_path = global_dir.join("config.yaml");
+        fs::write(
+            &global_path,
+            "debkit:\n  hardware_grub:\n    enabled: true\n    reboot_mode: cold\n",
+        )
+        .unwrap();
+
+        let value = merged_value(&global_path, &home, &hostname).unwrap();
+        let config = deserialize_config(value).unwrap();
+        assert!(config.hardware_grub.enabled);
+        assert_eq!(config.hardware_grub.reboot_mode, "cold");
+    }
+
+    #[test]
+    fn user_config_overrides_a_conflicting_global_key() {
+        let home = temp_home("global_vs_user");
+        let hostname = current_hostname().unwrap();
+        let global_dir = temp_home("global_vs_user_etc");
+        let global_path = global_dir.join("config.yaml");
+        fs::write(
+            &global_path,
+            "debkit:\n  hardware_grub:\n    enabled: true\n    reboot_mode: cold\n",
+        )
+        .unwrap();
+
+        let base_path = config_path_for_home(&home);
+        fs::create_dir_all(base_path.parent().unwrap()).unwrap();
+        fs::write(
+            &base_path,
+            "debkit:\n  hardware_grub:\n    reboot_mode: warm\n",
+        )
+        .unwrap();
+
+        let value = merged_value(&global_path, &home, &hostname).unwrap();
+        let config = deserialize_config(value).unwrap();
+        // The user's own file wins on the conflicting key...
+        assert_eq!(config.hardware_grub.reboot_mode, "warm");
+        // ...but a global-only key the user file never mentions still comes through.
+        assert!(config.hardware_grub.enabled);
+    }
+
+    #[test]
+    fn host_overlay_overrides_both_global_and_user_config() {
+        let home = temp_home("global_vs_user_vs_host");
+        let hostname = current_hostname().unwrap();
+        let global_dir = temp_home("global_vs_user_vs_host_etc");
+        let global_path = global_dir.join("config.yaml");
+        fs::write(
+            &global_path,
+            "debkit:\n  hardware_grub:\n    reboot_mode: cold\n",
+        )
+        .unwrap();
+
+        let base_path = config_path_for_home(&home);
+        fs::create_dir_all(base_path.parent().unwrap()).unwrap();
+        fs::write(
+            &base_path,
+            "debkit:\n  hardware_grub:\n    reboot_mode: warm\n",
+        )
+        .unwrap();
+
+        let host_path = host_config_path_for_home(&home, &hostname);
+        fs::create_dir_all(host_path.parent().unwrap()).unwrap();
+        fs::write(
+            &host_path,
+            "debkit:\n  hardware_grub:\n    reboot_mode: \"\"\n",
+        )
+        .unwrap();
+
+        let value = merged_value(&global_path, &home, &hostname).unwrap();
+        let config = deserialize_config(value).unwrap();
+        assert_eq!(config.hardware_grub.reboot_mode, "");
+    }
+
+    #[test]
+    fn missing_global_config_is_not_an_error_and_leaves_defaults_in_place() {
+        let home = temp_home("no_global");
+        let hostname = current_hostname().unwrap();
+        let nonexistent_global = temp_home("no_global_etc").join("does-not-exist.yaml");
+
+        let value = merged_value(&nonexistent_global, &home, &hostname).unwrap();
+        let config = deserialize_config(value).unwrap();
+        assert!(!config.hardware_grub.enabled);
+    }
+
+    #[test]
+    fn enable_section_creates_the_file_and_section_when_absent() {
+        let home = temp_home("enable_fresh");
+        let result = enable_section_for_home(&home, "hardware_grub").unwrap();
+        assert!(result.changed);
+        assert_eq!(result.path, config_path_for_home(&home));
+
+        let config = load_or_init_for_home(&home).unwrap();
+        assert!(config.hardware_grub.enabled);
+    }
+
+    #[test]
+    fn enable_section_preserves_other_sections_and_fields() {
+        let home = temp_home("enable_preserve");
+        let config_path = config_path_for_home(&home);
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        fs::write(
+            &config_path,
+            "debkit:\n  hardware_grub:\n    reboot_mode: cold\n  wake_on_lan:\n    enabled: true\n",
+        )
+        .unwrap();
+
+        let result = enable_section_for_home(&home, "hardware_grub").unwrap();
+        assert!(result.changed);
+
+        let config = load_or_init_for_home(&home).unwrap();
+        assert!(config.hardware_grub.enabled);
+        assert_eq!(config.hardware_grub.reboot_mode, "cold");
+        assert!(config.wake_on_lan.enabled);
+    }
+
+    #[test]
+    fn enable_section_is_idempotent() {
+        let home = temp_home("enable_idempotent");
+        enable_section_for_home(&home, "hardware_grub").unwrap();
+        let result = enable_section_for_home(&home, "hardware_grub").unwrap();
+        assert!(!result.changed);
+    }
+
+    #[test]
     fn host_config_path_uses_sanitized_hostname() {
         let home = PathBuf::from("/tmp/home");
         assert_eq!(
@@ -576,6 +808,36 @@ mod tests {
         let config = deserialize_config(value).unwrap();
         assert_eq!(config.nis.slaves, vec!["node-a.example.lan"]);
         assert!(config.wake_on_lan.enabled);
+    }
+
+    #[test]
+    fn video_mode_accepts_empty_and_columns_x_rows() {
+        assert!(is_valid_video_mode(""));
+        assert!(is_valid_video_mode("1024x768"));
+        assert!(is_valid_video_mode("1920x1080"));
+        assert!(is_valid_video_mode("640x480"));
+    }
+
+    #[test]
+    fn video_mode_rejects_zero_missing_or_non_numeric_components() {
+        assert!(!is_valid_video_mode("0x768"));
+        assert!(!is_valid_video_mode("1024x0"));
+        assert!(!is_valid_video_mode("1024x"));
+        assert!(!is_valid_video_mode("x768"));
+        assert!(!is_valid_video_mode("1024"));
+        assert!(!is_valid_video_mode("1024x768x32"));
+        assert!(!is_valid_video_mode("1024.5x768"));
+    }
+
+    #[test]
+    fn video_mode_rejects_shell_metacharacters_and_legacy_vga_words() {
+        assert!(!is_valid_video_mode("1024x768; rm -rf /"));
+        assert!(!is_valid_video_mode("$(reboot)"));
+        // The old vga= vocabulary no longer applies now that video_mode drives
+        // GRUB_GFXMODE/GRUB_GFXPAYLOAD_LINUX instead of the kernel's vga= parameter.
+        assert!(!is_valid_video_mode("ask"));
+        assert!(!is_valid_video_mode("791"));
+        assert!(!is_valid_video_mode("0x317"));
     }
 
     fn temp_home(label: &str) -> PathBuf {

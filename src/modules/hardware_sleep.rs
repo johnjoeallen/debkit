@@ -75,6 +75,10 @@ impl Module for HardwareSleep {
         "hardware.sleep"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("hardware_sleep")
+    }
+
     fn description(&self) -> &'static str {
         "suspend/resume diagnostics and the active /sys/power/mem_sleep mode"
     }

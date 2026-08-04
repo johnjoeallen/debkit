@@ -64,6 +64,10 @@ impl Module for HardwareRgb {
         "hardware.rgb"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("hardware_rgb")
+    }
+
     fn description(&self) -> &'static str {
         "i2c-dev kernel module prerequisite for motherboard/SMBus RGB control"
     }

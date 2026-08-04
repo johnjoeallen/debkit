@@ -50,7 +50,7 @@ pub struct DebkitConfig {
     pub network_interfaces: NetworkInterfacesConfig,
     pub tailscale: TailscaleConfig,
     pub dns: DnsConfig,
-    pub hardware_reboot: HardwareRebootConfig,
+    pub hardware_grub: HardwareGrubConfig,
     pub hardware_sleep: HardwareSleepConfig,
     pub hardware_rgb: HardwareRgbConfig,
 }
@@ -506,14 +506,14 @@ pub const DEFAULT_REBOOT_MODE: &str = "cold";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct HardwareRebootConfig {
+pub struct HardwareGrubConfig {
     pub enabled: bool,
     /// Declared installed RAM capacity, in GiB, rounded to the nearest common size (8,
     /// 16, 32, 64, 96, 128, ...). 0 means "not declared, don't check." Compared against
     /// `/proc/meminfo`'s `MemTotal` (also rounded up to the nearest common capacity, to
     /// absorb the gap between nominal and OS-visible RAM) — a coarse but root-free,
     /// no-`dmidecode` signal that catches a DIMM going undetected after a reboot/BIOS
-    /// change, per modules::hardware_reboot.
+    /// change, per modules::hardware_grub.
     pub expected_memory_gib: u32,
     /// `"cold"`, `"warm"`, or empty (default — not explicitly declared). The first
     /// component of the kernel's `reboot=` parameter (see `man 2 reboot`,
@@ -524,7 +524,7 @@ pub struct HardwareRebootConfig {
     /// full retraining.
     ///
     /// Left empty, the effective mode falls back to the matched board's
-    /// `recommended_reboot_mode` in the board registry (see modules::hardware_reboot),
+    /// `recommended_reboot_mode` in the board registry (see modules::hardware_grub),
     /// and only then to `DEFAULT_REBOOT_MODE` ("cold") if neither says anything — an
     /// explicit value here always wins over the registry. Validated in
     /// `config::validate_config` since it's written into a file `update-grub` sources
@@ -535,6 +535,33 @@ pub struct HardwareRebootConfig {
     /// `"kbd"`, `"triple"`, `"efi"`, `"pci"`, or empty (default — let the kernel pick).
     /// Also validated.
     pub reboot_type: String,
+    /// The boot-time display resolution, set into `/etc/default/grub`'s
+    /// `GRUB_GFXMODE` (the GRUB menu's own resolution) and `GRUB_GFXPAYLOAD_LINUX`
+    /// (the resolution handed to the kernel/KMS at boot) — both from this one value,
+    /// kept in sync. Simple `"<columns>x<rows>"` form (e.g. `"1024x768"`), or empty
+    /// (default — not declared, don't touch grub for this); both components must be
+    /// plain positive-integer pixel counts. This is GRUB's own resolution mechanism,
+    /// not the kernel's legacy `vga=` boot parameter (which used raw VESA mode
+    /// numbers and lived inside `GRUB_CMDLINE_LINUX_DEFAULT` alongside `reboot=`) —
+    /// `GRUB_GFXMODE`/`GRUB_GFXPAYLOAD_LINUX` are their own standalone lines. Unlike
+    /// `reboot_mode`, which this module only ever writes when it has independently
+    /// confirmed evidence a mitigation is needed (see `needs_grub_mitigation`),
+    /// declaring `video_mode` here is itself a direct, sufficient instruction to apply
+    /// it — there's no detection step for a display mode the way there is for a
+    /// reboot-training regression. Also validated in `config::validate_config` for the
+    /// same shell-injection reason as `reboot_mode`/`reboot_type`.
+    pub video_mode: String,
+    /// Seconds GRUB waits at the boot menu before booting the default entry,
+    /// persisted into `/etc/default/grub`'s standalone `GRUB_TIMEOUT` line. `None`
+    /// (default) means "not declared, don't touch it." `Some(0)` is a legitimate,
+    /// distinct value (skip the menu delay entirely) — that's why this is `Option<u32>`
+    /// rather than a `0`-means-unset sentinel like `expected_memory_gib`. Like
+    /// `video_mode` and unlike `reboot_mode`, declaring this is itself a direct,
+    /// sufficient instruction to apply it — there's no detection step for a boot
+    /// timeout the way there is for a reboot-training regression. Not free-form text,
+    /// so unlike `reboot_mode`/`reboot_type`/`video_mode` it carries no
+    /// shell-injection surface and needs no entry in `config::validate_config`.
+    pub timeout: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

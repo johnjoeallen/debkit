@@ -43,6 +43,10 @@ impl Module for NetworkWakeOnLan {
         "network.wake_on_lan"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("wake_on_lan")
+    }
+
     fn description(&self) -> &'static str {
         "wake-on-LAN enablement via NetworkManager or ethtool, with ownership conflict detection"
     }

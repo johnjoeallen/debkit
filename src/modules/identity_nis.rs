@@ -67,6 +67,10 @@ impl Module for IdentityNis {
         "identity.nis"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("nis")
+    }
+
     fn description(&self) -> &'static str {
         "NIS domain, yp.conf, nsswitch.conf, and master-side map lifecycle"
     }

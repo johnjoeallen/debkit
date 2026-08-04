@@ -1,10 +1,14 @@
-# DebKit known-affected-BIOS registry, shipped with the .deb package to
-# /usr/share/debkit/boards/registry.yaml.
+# DebKit known-affected-BIOS registry. This same source file is shipped by the .deb
+# package to two places: a read-only reference copy at
+# /usr/share/debkit/boards/registry.yaml, and -- as a dpkg conffile, meaning
+# `apt install`/upgrade won't clobber local edits -- the locally-editable copy at
+# /etc/debkit/boards/registry.yaml. If you're reading this at the /etc path, this is
+# the one to actually add entries to.
 #
 # Deliberately conservative: fabricating board/BIOS compatibility data without
 # verified sourcing would be worse than shipping none -- a wrong "known-affected"
 # entry either causes false alarms on hardware that's actually fine, or false
-# confidence on hardware that isn't. hardware.reboot's memory-capacity check
+# confidence on hardware that isn't. hardware.grub's memory-capacity check
 # still works fully without any entries here; this registry only adds the
 # separate known-affected-BIOS lookup, plus a per-board recommended_reboot_mode,
 # on top.
@@ -13,12 +17,15 @@
 # confirmed to revert memory training/EXPO/XMP, drop a DIMM, etc.), add it
 # here and send a PR so other users with the same board benefit too. Entries
 # you only want locally (not verified enough to share, or specific to your
-# own board) belong instead in ~/.config/debkit/boards/registry.yaml, which
-# is merged on top of this file and always wins on a conflict.
+# own board) belong instead in /etc/debkit/boards/registry.yaml, which is
+# merged on top of this file and always wins on a conflict. That file is a
+# machine-wide setting, not a per-user one -- which BIOS versions are
+# known-bad on a given board has nothing to do with which Unix user runs
+# `debkit`.
 #
 # Matched on normalized board_vendor/board_name (case-folded,
 # whitespace-collapsed, common vendor-suffix stripping -- see
-# modules::hardware_reboot::normalize_board_field). affected_bios_versions is
+# modules::hardware_grub::normalize_board_field). affected_bios_versions is
 # an exact-match list, not a range: vendor BIOS version strings (MSI's
 # "2.AC3", for example) aren't a consistently orderable scheme.
 #
