@@ -41,7 +41,7 @@ enum Commands {
     #[command(about = "Show the change plan a module would apply")]
     Plan(ModuleArgs),
     #[command(about = "Apply a module's change plan and verify the result")]
-    Apply(ModuleArgs),
+    Apply(ApplyArgs),
     #[command(about = "Run a module's functional verification checks")]
     Verify(ModuleArgs),
     #[command(about = "Reverse a module's most recent applied change plan")]
@@ -57,6 +57,21 @@ struct ModuleArgs {
 
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ApplyArgs {
+    /// Dotted module name, e.g. `core.inspect`. Omits to run every registered module.
+    module: Option<String>,
+
+    #[arg(long)]
+    json: bool,
+
+    /// Materialize the change plan into /tmp/debkit/<run-id>/ instead of touching
+    /// real files. Nothing is applied, nothing is verified, no evidence is written —
+    /// safe to run without root even for changes that would need it to actually apply.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -521,7 +536,7 @@ fn run_plan(args: &ModuleArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_apply(args: &ModuleArgs) -> anyhow::Result<()> {
+fn run_apply(args: &ApplyArgs) -> anyhow::Result<()> {
     let config = config::load_or_init()?;
     let ctx = ModuleContext {
         hostname: config.host.name.clone(),
@@ -540,7 +555,13 @@ fn run_apply(args: &ModuleArgs) -> anyhow::Result<()> {
         }
         let plan = module.plan(&ctx, &observation, &diagnosis)?;
         if plan.is_empty() {
-            println!("already compliant; no changes applied");
+            println!(
+                "already compliant; no changes {}",
+                if args.dry_run { "to stage" } else { "applied" }
+            );
+            if args.dry_run {
+                continue;
+            }
             let evidence = engine::evidence::Evidence {
                 module: module.name().to_string(),
                 host: ctx.hostname.clone(),
@@ -553,6 +574,36 @@ fn run_apply(args: &ModuleArgs) -> anyhow::Result<()> {
             };
             let path = engine::evidence::write_evidence(&evidence)?;
             println!("evidence: {}", path.display());
+            continue;
+        }
+
+        if args.dry_run {
+            let staged = engine::apply::stage_plan(&plan)?;
+            println!(
+                "staged {} file change(s) under {} (run {})",
+                staged.files.len(),
+                staged.root.display(),
+                staged.run_id
+            );
+            for file in &staged.files {
+                println!(
+                    "  {} -> {}",
+                    file.target.display(),
+                    file.staged_path.display()
+                );
+                match &file.pristine_path {
+                    Some(pristine) => println!("    pristine copy: {}", pristine.display()),
+                    None => {
+                        println!("    pristine copy: none (file didn't exist or wasn't readable)")
+                    }
+                }
+            }
+            if !staged.skipped_actions.is_empty() {
+                println!("not executed in dry-run mode (no file content to preview):");
+                for action in &staged.skipped_actions {
+                    println!("  {action}");
+                }
+            }
             continue;
         }
 
@@ -1053,8 +1104,19 @@ mod tests {
             Cli::try_parse_from(["debkit", "apply", "core.inspect"])
                 .unwrap()
                 .command,
-            Commands::Apply(ModuleArgs {
+            Commands::Apply(ApplyArgs {
                 module: Some(_),
+                dry_run: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["debkit", "apply", "hardware.reboot", "--dry-run"])
+                .unwrap()
+                .command,
+            Commands::Apply(ApplyArgs {
+                module: Some(_),
+                dry_run: true,
                 ..
             })
         ));

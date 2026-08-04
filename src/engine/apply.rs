@@ -221,6 +221,145 @@ pub fn rollback(applied: &AppliedPlan) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One `Change::WriteFile` staged for review by `stage_plan` — materialized to a
+/// preview location without ever touching the real target.
+#[derive(Debug, Clone)]
+pub struct StagedFile {
+    /// The real absolute path a live `apply` would write to.
+    pub target: PathBuf,
+    /// Where the new content was actually written, for inspection.
+    pub staged_path: PathBuf,
+    /// Where the target's current, pre-change content was snapshotted, if the target
+    /// already existed and was readable. `None` for a new file, or if the existing
+    /// file couldn't be read (permission denied) — staging degrades honestly rather
+    /// than failing the whole preview over a snapshot it couldn't take.
+    pub pristine_path: Option<PathBuf>,
+}
+
+/// Everything `stage_plan` produced for one dry run.
+#[derive(Debug, Clone)]
+pub struct StagedPlan {
+    pub run_id: String,
+    pub root: PathBuf,
+    pub files: Vec<StagedFile>,
+    /// Non-`WriteFile` changes (`RunCommand`/`ServiceAction`/`InstallPackages`) a
+    /// real `apply` would also perform, rendered for visibility — dry-run never
+    /// executes any of them, since there's no file content to preview for a command.
+    pub skipped_actions: Vec<String>,
+}
+
+/// `/tmp/debkit` by default; overridable via `DEBKIT_STAGE_DIR` so tests never touch
+/// the real path, mirroring `evidence::state_root`'s `DEBKIT_STATE_DIR` pattern.
+pub fn staging_root() -> PathBuf {
+    std::env::var_os("DEBKIT_STAGE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/debkit"))
+}
+
+/// Materializes what `apply_plan` would do into a parallel, inspectable directory
+/// tree under `staging_root()/<run-id>/` — without ever touching a real file — for
+/// `debkit apply --dry-run`. Only `Change::WriteFile` entries produce staged output,
+/// since they're the only variant with file content to preview; every other change
+/// type is listed in `skipped_actions` instead of executed.
+///
+/// Each `WriteFile` target's *current* real content, if it exists and is readable
+/// without elevated privileges, is also snapshotted into a `pristine/` copy alongside
+/// the staged `changes/` copy — a directly-inspectable "before" reference distinct
+/// from (and simpler to eyeball than) the rollback journal, which restores
+/// programmatically but isn't meant for a human to read through first.
+///
+/// Runs entirely as the invoking user: `/tmp` is normally world-writable, and every
+/// `WriteFile` target this codebase manages is expected to be world-readable (the
+/// same assumption `apply_change`'s pre-change snapshot already makes via
+/// `exec::read_file_if_exists`) — so previewing a change never itself requires root,
+/// even for a change that would need it to actually apply.
+pub fn stage_plan(plan: &ChangePlan) -> anyhow::Result<StagedPlan> {
+    stage_plan_under(&staging_root(), plan)
+}
+
+/// Pulled out of `stage_plan` so tests can target a temp directory instead of the
+/// real `staging_root()` — avoids both touching `/tmp/debkit` for real during tests
+/// and the parallel-test races an env-var-based override would risk.
+fn stage_plan_under(base: &Path, plan: &ChangePlan) -> anyhow::Result<StagedPlan> {
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let root = base.join(&run_id);
+    let changes_root = root.join("changes");
+    let pristine_root = root.join("pristine");
+
+    let mut files = Vec::new();
+    let mut skipped_actions = Vec::new();
+
+    for planned in &plan.changes {
+        match &planned.change {
+            Change::WriteFile { path, content } => {
+                let staged_path = mirror_path(&changes_root, path);
+                write_staged_file(&staged_path, content)
+                    .with_context(|| format!("failed to stage {}", path.display()))?;
+
+                let pristine_path = if path.exists() {
+                    let pristine_path = mirror_path(&pristine_root, path);
+                    snapshot_pristine_file(path, &pristine_path).ok().flatten()
+                } else {
+                    None
+                };
+
+                files.push(StagedFile {
+                    target: path.clone(),
+                    staged_path,
+                    pristine_path,
+                });
+            }
+            Change::RunCommand { program, args, .. } => {
+                skipped_actions.push(format!("run: {program} {}", args.join(" ")));
+            }
+            Change::ServiceAction { unit, action } => {
+                skipped_actions.push(format!("service: systemctl {} {unit}", action.as_str()));
+            }
+            Change::InstallPackages { packages } => {
+                skipped_actions.push(format!("install: {}", packages.join(", ")));
+            }
+        }
+    }
+
+    Ok(StagedPlan {
+        run_id,
+        root,
+        files,
+        skipped_actions,
+    })
+}
+
+/// Joins `target` (always an absolute path, e.g. `/etc/default/grub`) onto `root`,
+/// stripping the leading `/` so it composes cleanly instead of `PathBuf::join`
+/// treating the absolute `target` as replacing `root` entirely.
+fn mirror_path(root: &Path, target: &Path) -> PathBuf {
+    root.join(target.strip_prefix("/").unwrap_or(target))
+}
+
+fn write_staged_file(staged_path: &Path, content: &str) -> anyhow::Result<()> {
+    if let Some(parent) = staged_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(staged_path, content)
+        .with_context(|| format!("failed to write {}", staged_path.display()))
+}
+
+/// Returns `Ok(Some(path))` on success, `Ok(None)` if the source couldn't be read
+/// (permission denied is common and shouldn't fail the whole staging run).
+fn snapshot_pristine_file(source: &Path, pristine_path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    let Ok(content) = fs::read_to_string(source) else {
+        return Ok(None);
+    };
+    if let Some(parent) = pristine_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(pristine_path, content)
+        .with_context(|| format!("failed to write {}", pristine_path.display()))?;
+    Ok(Some(pristine_path.to_path_buf()))
+}
+
 pub fn journal_dir() -> PathBuf {
     state_root().join("journal")
 }
@@ -292,6 +431,149 @@ fn now_unix() -> u64 {
 mod tests {
     use super::*;
     use crate::engine::plan::Risk;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "debkit_apply_test_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn stage_plan_writes_new_content_without_touching_the_real_target() {
+        let base = temp_dir("stage_new_file");
+        let target = base.join("target.conf");
+        // Deliberately do NOT create `target` -- this exercises the "file doesn't
+        // exist yet" path (no pristine copy expected).
+        let mut plan = ChangePlan::new();
+        plan.push(
+            "write target.conf",
+            Risk::Low,
+            Change::WriteFile {
+                path: target.clone(),
+                content: "hello\n".to_string(),
+            },
+        );
+
+        let staged = stage_plan_under(&base, &plan).unwrap();
+        assert_eq!(staged.files.len(), 1);
+        let file = &staged.files[0];
+        assert_eq!(file.target, target);
+        assert!(file.pristine_path.is_none());
+        assert_eq!(fs::read_to_string(&file.staged_path).unwrap(), "hello\n");
+        // The real target must never be created by staging.
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn stage_plan_snapshots_pristine_content_when_target_exists() {
+        let base = temp_dir("stage_existing_file");
+        let target = base.join("target.conf");
+        fs::write(&target, "original\n").unwrap();
+
+        let mut plan = ChangePlan::new();
+        plan.push(
+            "write target.conf",
+            Risk::Low,
+            Change::WriteFile {
+                path: target.clone(),
+                content: "new content\n".to_string(),
+            },
+        );
+
+        let staged = stage_plan_under(&base, &plan).unwrap();
+        let file = &staged.files[0];
+        let pristine_path = file.pristine_path.as_ref().expect("target existed");
+        assert_eq!(fs::read_to_string(pristine_path).unwrap(), "original\n");
+        assert_eq!(
+            fs::read_to_string(&file.staged_path).unwrap(),
+            "new content\n"
+        );
+        // The real target is untouched -- still its original content.
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
+    }
+
+    #[test]
+    fn stage_plan_never_executes_non_write_file_changes() {
+        let base = temp_dir("stage_non_file_changes");
+        let mut plan = ChangePlan::new();
+        plan.push(
+            "run update-grub",
+            Risk::High,
+            Change::RunCommand {
+                program: "update-grub".to_string(),
+                args: Vec::new(),
+                privileged: true,
+            },
+        );
+        plan.push(
+            "restart dnsmasq",
+            Risk::Medium,
+            Change::ServiceAction {
+                unit: "dnsmasq".to_string(),
+                action: crate::engine::plan::ServiceActionKind::Restart,
+            },
+        );
+        plan.push(
+            "install ripgrep",
+            Risk::Medium,
+            Change::InstallPackages {
+                packages: vec!["ripgrep".to_string()],
+            },
+        );
+
+        let staged = stage_plan_under(&base, &plan).unwrap();
+        assert!(staged.files.is_empty());
+        assert_eq!(staged.skipped_actions.len(), 3);
+        assert!(staged.skipped_actions[0].contains("update-grub"));
+        assert!(staged.skipped_actions[1].contains("restart"));
+        assert!(staged.skipped_actions[2].contains("ripgrep"));
+    }
+
+    #[test]
+    fn stage_plan_mirrors_the_absolute_path_hierarchy_under_a_fresh_run_id() {
+        let base = temp_dir("stage_mirrors_hierarchy");
+        let target = base.join("etc").join("default").join("grub");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"\n").unwrap();
+
+        let mut plan = ChangePlan::new();
+        plan.push(
+            "patch grub default",
+            Risk::High,
+            Change::WriteFile {
+                path: target.clone(),
+                content: "GRUB_CMDLINE_LINUX_DEFAULT=\"quiet reboot=cold\"\n".to_string(),
+            },
+        );
+
+        let staged = stage_plan_under(&base, &plan).unwrap();
+        assert!(staged.root.starts_with(&base));
+        assert!(staged.root.ends_with(&staged.run_id));
+        let file = &staged.files[0];
+        assert!(file.staged_path.starts_with(staged.root.join("changes")));
+        assert!(
+            file.pristine_path
+                .as_ref()
+                .unwrap()
+                .starts_with(staged.root.join("pristine"))
+        );
+    }
+
+    #[test]
+    fn two_stage_plan_runs_get_different_run_ids() {
+        let base = temp_dir("stage_unique_run_ids");
+        let plan = ChangePlan::new();
+        let first = stage_plan_under(&base, &plan).unwrap();
+        let second = stage_plan_under(&base, &plan).unwrap();
+        assert_ne!(first.run_id, second.run_id);
+    }
 
     #[test]
     fn restore_service_state_round_trips_through_json() {
