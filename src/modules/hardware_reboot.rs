@@ -574,14 +574,17 @@ fn effective_reboot_mode(
     crate::config::DEFAULT_REBOOT_MODE.to_string()
 }
 
-/// Whether either finding gives *confirmed* evidence of the specific problem the grub
-/// mitigation addresses — a memory-capacity mismatch, or the current BIOS actually
-/// matching a known-affected registry entry. Deliberately does NOT trigger on "could
-/// not determine" (e.g. `/proc/meminfo` unreadable): absence of information isn't
-/// evidence of the problem, so it shouldn't justify touching the bootloader config.
-/// Declaring `reboot_mode`/`reboot_type` and enabling the module isn't, by itself,
-/// sufficient reason to modify grub — there has to be an actual signal something's
-/// wrong first.
+/// Whether there's *confirmed* evidence the grub mitigation should apply: a
+/// memory-capacity mismatch, the current BIOS actually matching a known-affected
+/// registry entry, or the board itself matching a registry entry that carries a
+/// `recommended_reboot_mode` — a recognized board the registry already has a known
+/// answer for wins outright, without needing its own separate confirmed-bad
+/// BIOS/memory finding first. Deliberately does NOT trigger on "could not determine"
+/// (e.g. `/proc/meminfo` unreadable): absence of information isn't evidence of a
+/// problem, so it shouldn't justify touching the bootloader config. Declaring
+/// `reboot_mode`/`reboot_type` and enabling the module isn't, by itself, sufficient
+/// reason to modify grub — there has to be an actual signal first, whether that's a
+/// live mismatch or a registry entry that already knows this board.
 fn needs_grub_mitigation(expected_memory_gib: u32, data: &HardwareRebootObservation) -> bool {
     if data.current_bios_is_known_affected {
         return true;
@@ -589,6 +592,13 @@ fn needs_grub_mitigation(expected_memory_gib: u32, data: &HardwareRebootObservat
     if expected_memory_gib > 0
         && let Some(observed) = data.observed_memory_gib
         && observed != expected_memory_gib
+    {
+        return true;
+    }
+    if data
+        .registry_match
+        .as_ref()
+        .is_some_and(|entry| entry.recommended_reboot_mode.is_some())
     {
         return true;
     }
@@ -1264,6 +1274,65 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
         data.grub_default_declares_reboot_arg = Some(false);
         data.grub_cfg_declares_reboot_arg = Some(false);
         let config = config_with_reboot_args("cold", ""); // expected_memory_gib: 0
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data));
+        assert!(diagnosis.compliant);
+    }
+
+    /// A registry entry matching this exact board, carrying a
+    /// `recommended_reboot_mode`, is itself enough to justify the mitigation --
+    /// even with no confirmed memory mismatch and no known-affected BIOS version.
+    /// The registry already has a known answer for this board, so it wins outright.
+    #[test]
+    fn mismatch_when_registry_match_carries_a_recommended_reboot_mode() {
+        let mut data = base_data();
+        data.grub_default_current = Some("GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"\n".to_string());
+        data.grub_default_declares_reboot_arg = Some(false);
+        data.grub_default_desired =
+            patch_grub_cmdline_default(data.grub_default_current.as_ref().unwrap(), "cold");
+        data.grub_cfg_declares_reboot_arg = Some(false);
+        data.observed_memory_gib = Some(128); // matches expected_memory_gib below
+        data.current_bios_is_known_affected = false;
+        data.registry_match = Some(registry_entry_with_recommendation("cold"));
+
+        let config = config_with_memory_mismatch("", "", 128);
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data.clone()));
+        assert!(!diagnosis.compliant);
+        let plan = HardwareReboot
+            .plan(&ctx, &observation(data), &diagnosis)
+            .unwrap();
+        assert!(
+            !plan.is_empty(),
+            "a recognized board with a registry recommendation should get the mitigation"
+        );
+    }
+
+    /// A registry match with no `recommended_reboot_mode` (e.g. an entry that only
+    /// documents a known-affected BIOS version the current BIOS doesn't match) does
+    /// NOT by itself justify the mitigation -- there's nothing actionable in it.
+    #[test]
+    fn compliant_when_registry_matches_but_has_no_recommendation_and_nothing_else_is_confirmed() {
+        let mut data = base_data();
+        data.grub_default_declares_reboot_arg = Some(false);
+        data.grub_cfg_declares_reboot_arg = Some(false);
+        data.observed_memory_gib = Some(128);
+        data.current_bios_is_known_affected = false;
+        data.registry_match = Some(BoardCompatibilityEntry {
+            vendor: "Micro-Star International".to_string(),
+            name: "MAG X870E TOMAHAWK WIFI (MS-7E59)".to_string(),
+            affected_bios_versions: vec!["9.99".to_string()],
+            note: "unrelated regression on a different BIOS version".to_string(),
+            recommended_reboot_mode: None,
+        });
+
+        let config = config_with_memory_mismatch("", "", 128);
         let ctx = Context {
             hostname: "tornado".to_string(),
             config: &config,

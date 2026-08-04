@@ -22,9 +22,12 @@ even though it can't touch the DIMM or BIOS version directly. This is genuinely 
 highest-risk write in DebKit today — a bad `/etc/default/grub` edit can leave a system
 unbootable — so both changes are `Risk::High` in `debkit plan` output, and the
 parsing that produces them is deliberately conservative (see below). This mitigation
-is only ever proposed when a finding is actually confirmed (a memory mismatch, or the
-current BIOS matching a known-affected registry entry) — enabling the module and
-declaring `reboot_mode` isn't, by itself, reason enough to touch the bootloader.
+is only ever proposed when there's an actual signal for it: a confirmed memory
+mismatch, the current BIOS matching a known-affected registry entry, or the board
+itself matching a registry entry that carries a `recommended_reboot_mode` — a
+recognized board the registry already has a known-good answer for wins outright,
+without needing its own separate confirmed-bad finding first. Enabling the module
+and declaring `reboot_mode` isn't, by itself, reason enough to touch the bootloader.
 
 Reads straight from `/sys/class/dmi/id/*` — no `dmidecode`, no root required. Missing
 individual fields, or no DMI support on the platform at all, is a normal `None`
