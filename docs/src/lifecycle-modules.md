@@ -20,27 +20,9 @@ A module's `plan()` returns an empty plan when it's already compliant — re-run
 competing to own the same resource (e.g. two DNS resolvers both listening on :53),
 `diagnose()` reports a conflict and `plan`/`apply` refuse to act until it's resolved.
 
-Currently registered modules (see `debkit list` for the live, authoritative list):
-
-| Module | What it manages |
-| --- | --- |
-| `core.inspect` | Read-only baseline evidence: OS, kernel, failed units, watched packages, NICs |
-| `network.interfaces` | Interface inventory, manager-ownership conflicts, stable MAC-based naming |
-| `network.dhcp` | Read-only DHCP server ownership conflict + client-backend detection |
-| `network.dns` | Declarative dnsmasq local zones/upstream, resolver-conflict detection, `dig` verify |
-| `network.firewall` | Read-only backend/ruleset diagnostics, real TCP-reachability verification |
-| `network.tailscale` | Read-only Tailscale backend/DNS status |
-| `network.wake_on_lan` | Wake-on-LAN via NetworkManager or ethtool, with ownership conflict detection |
-| `identity.nis` | NIS domain, `yp.conf`, `nsswitch.conf`, master-side map lifecycle |
-| `identity.nss` | Local vs. NIS UID/GID collision detection, local-recovery-access check |
-| `identity.pam` | `pam_mkhomedir.so` for create-home-on-first-login |
-| `identity.sudo` | Passwordless-sudo group, NOPASSWD drop-in, membership |
-| `systemd.units` | Read-only report of currently failed systemd units |
-| `developer.git` | Global `git` credential helper and credential-store file permissions |
-| `apt.repositories` | apt-cacher-ng proxy config and DIRECT-bypass exceptions |
-| `hardware.reboot` | AM5 board/BIOS identification, known-affected-BIOS registry, memory-capacity check |
-| `hardware.sleep` | Suspend/resume diagnostics, the active `/sys/power/mem_sleep` mode |
-| `hardware.rgb` | `i2c-dev` kernel module prerequisite for motherboard/SMBus RGB control |
+See the [Module Reference](./modules/README.md) for all 17 registered modules — each
+with a description, its `plan()`/`apply()` scope, and (for the twelve with one) a
+fully annotated config section. `debkit list` prints the same set live.
 
 Some deliberately stop at diagnostics: `network.dhcp`/`network.firewall`/`systemd.units`
 never write config (DebKit isn't positioned to choose a DHCP server or safely rewrite
