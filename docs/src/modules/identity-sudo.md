@@ -11,7 +11,7 @@ debkit:
     enabled: false
     group: superuser
     add_current_user: true
-    users: [jallen, alice]
+    users: [alex, alice]
     # When true, group membership is left to NIS instead of local
     # /etc/group -- this module then only validates that NSS/sudo policy
     # report the expected no-password access, and skips local group

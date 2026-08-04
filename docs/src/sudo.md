@@ -9,7 +9,7 @@ debkit:
     enabled: true
     group: superuser
     add_current_user: true
-    users: [jallen, alice]
+    users: [alex, alice]
     nis_managed: false
 ```
 

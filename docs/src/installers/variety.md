@@ -14,7 +14,7 @@ without installing anything.
 ```yaml
 debkit:
   wallpapers:
-    folder: /home/jallen/Pictures/Wallpapers
+    folder: /home/alex/Pictures/Wallpapers
   variety:
     interval_minutes: 10
 ```
