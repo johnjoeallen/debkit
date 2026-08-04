@@ -244,23 +244,25 @@ impl Module for HardwareReboot {
             }
         }
 
-        let desired_arg = desired_reboot_arg(
-            &ctx.config.hardware_reboot.reboot_mode,
-            &ctx.config.hardware_reboot.reboot_type,
-        );
-        match data.grub_default_declares_reboot_arg {
-            Some(false) => findings.push(format!(
-                "{GRUB_DEFAULT_PATH} does not declare `reboot={desired_arg}` — a cold reboot forces full memory retraining, the actual mitigation for the findings above"
-            )),
-            None => findings.push(format!(
-                "could not confirm whether {GRUB_DEFAULT_PATH} declares `reboot={desired_arg}`"
-            )),
-            Some(true) => {}
-        }
-        if data.grub_cfg_declares_reboot_arg == Some(false) {
-            findings.push(format!(
-                "{GRUB_CFG_PATH} does not reflect `reboot={desired_arg}` yet — run `update-grub` (or `debkit apply hardware.reboot`)"
-            ));
+        if needs_grub_mitigation(ctx.config.hardware_reboot.expected_memory_gib, &data) {
+            let desired_arg = desired_reboot_arg(
+                &ctx.config.hardware_reboot.reboot_mode,
+                &ctx.config.hardware_reboot.reboot_type,
+            );
+            match data.grub_default_declares_reboot_arg {
+                Some(false) => findings.push(format!(
+                    "{GRUB_DEFAULT_PATH} does not declare `reboot={desired_arg}` — a cold reboot forces full memory retraining, the actual mitigation for the findings above"
+                )),
+                None => findings.push(format!(
+                    "could not confirm whether {GRUB_DEFAULT_PATH} declares `reboot={desired_arg}`"
+                )),
+                Some(true) => {}
+            }
+            if data.grub_cfg_declares_reboot_arg == Some(false) {
+                findings.push(format!(
+                    "{GRUB_CFG_PATH} does not reflect `reboot={desired_arg}` yet — run `update-grub` (or `debkit apply hardware.reboot`)"
+                ));
+            }
         }
 
         if findings.is_empty() {
@@ -283,8 +285,14 @@ impl Module for HardwareReboot {
 
         // See module doc comment: the memory-capacity and known-affected-BIOS
         // findings themselves have no automated fix. This only ever acts on the
-        // shared grub-level mitigation for both.
+        // shared grub-level mitigation for both -- and only when one of them is
+        // confirmed, not just because reboot_mode/reboot_type are declared. A
+        // passing memory check and no BIOS-registry match means grub is left alone
+        // entirely, even if it doesn't already say reboot=cold.
         let data: HardwareRebootObservation = serde_json::from_value(observation.data.clone())?;
+        if !needs_grub_mitigation(ctx.config.hardware_reboot.expected_memory_gib, &data) {
+            return Ok(plan);
+        }
         let desired_arg = desired_reboot_arg(
             &ctx.config.hardware_reboot.reboot_mode,
             &ctx.config.hardware_reboot.reboot_type,
@@ -525,6 +533,27 @@ fn desired_reboot_arg(mode: &str, kind: &str) -> String {
     } else {
         format!("{mode},{kind}")
     }
+}
+
+/// Whether either finding gives *confirmed* evidence of the specific problem the grub
+/// mitigation addresses — a memory-capacity mismatch, or the current BIOS actually
+/// matching a known-affected registry entry. Deliberately does NOT trigger on "could
+/// not determine" (e.g. `/proc/meminfo` unreadable): absence of information isn't
+/// evidence of the problem, so it shouldn't justify touching the bootloader config.
+/// Declaring `reboot_mode`/`reboot_type` and enabling the module isn't, by itself,
+/// sufficient reason to modify grub — there has to be an actual signal something's
+/// wrong first.
+fn needs_grub_mitigation(expected_memory_gib: u32, data: &HardwareRebootObservation) -> bool {
+    if data.current_bios_is_known_affected {
+        return true;
+    }
+    if expected_memory_gib > 0
+        && let Some(observed) = data.observed_memory_gib
+        && observed != expected_memory_gib
+    {
+        return true;
+    }
+    false
 }
 
 /// Extracts the raw `"..."`/`'...'` value (including quotes) from
@@ -1005,6 +1034,16 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
         config
     }
 
+    fn config_with_memory_mismatch(
+        mode: &str,
+        kind: &str,
+        expected_memory_gib: u32,
+    ) -> crate::config::DebkitConfig {
+        let mut config = config_with_reboot_args(mode, kind);
+        config.hardware_reboot.expected_memory_gib = expected_memory_gib;
+        config
+    }
+
     #[test]
     fn compliant_when_grub_already_declares_desired_arg() {
         let config = config_with_reboot_args("cold", "");
@@ -1016,16 +1055,64 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
         assert!(diagnosis.compliant);
     }
 
+    /// The exact real-world scenario that motivated `needs_grub_mitigation`: memory
+    /// capacity checks out fine and there's no BIOS-registry match, so grub is left
+    /// alone entirely -- even though it doesn't declare reboot=cold. Enabling the
+    /// module and declaring reboot_mode is not, by itself, a reason to touch grub.
     #[test]
-    fn mismatch_and_plan_when_grub_default_missing_the_arg() {
+    fn grub_not_declaring_the_arg_is_compliant_when_memory_and_bios_are_both_fine() {
         let mut data = base_data();
         data.grub_default_current = Some("GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"\n".to_string());
         data.grub_default_declares_reboot_arg = Some(false);
         data.grub_default_desired =
             patch_grub_cmdline_default(data.grub_default_current.as_ref().unwrap(), "cold");
         data.grub_cfg_declares_reboot_arg = Some(false);
+        data.observed_memory_gib = Some(128); // matches expected_memory_gib below
+        data.current_bios_is_known_affected = false;
 
-        let config = config_with_reboot_args("cold", "");
+        let config = config_with_memory_mismatch("cold", "", 128);
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data.clone()));
+        assert!(diagnosis.compliant);
+        let plan = HardwareReboot
+            .plan(&ctx, &observation(data), &diagnosis)
+            .unwrap();
+        assert!(
+            plan.is_empty(),
+            "no confirmed problem -- grub must not be touched"
+        );
+    }
+
+    /// Same as above but `expected_memory_gib` isn't declared at all (0, the default)
+    /// -- the memory check is skipped entirely, so there's even less basis to act.
+    #[test]
+    fn grub_not_declaring_the_arg_is_compliant_when_memory_check_is_undeclared() {
+        let mut data = base_data();
+        data.grub_default_declares_reboot_arg = Some(false);
+        data.grub_cfg_declares_reboot_arg = Some(false);
+        let config = config_with_reboot_args("cold", ""); // expected_memory_gib: 0
+        let ctx = Context {
+            hostname: "tornado".to_string(),
+            config: &config,
+        };
+        let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data));
+        assert!(diagnosis.compliant);
+    }
+
+    #[test]
+    fn mismatch_and_plan_when_grub_default_missing_the_arg_and_memory_mismatched() {
+        let mut data = base_data();
+        data.grub_default_current = Some("GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"\n".to_string());
+        data.grub_default_declares_reboot_arg = Some(false);
+        data.grub_default_desired =
+            patch_grub_cmdline_default(data.grub_default_current.as_ref().unwrap(), "cold");
+        data.grub_cfg_declares_reboot_arg = Some(false);
+        data.observed_memory_gib = Some(64); // a DIMM went undetected
+
+        let config = config_with_memory_mismatch("cold", "", 128);
         let ctx = Context {
             hostname: "tornado".to_string(),
             config: &config,
@@ -1047,10 +1134,17 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
     }
 
     #[test]
-    fn effective_only_stale_is_still_a_mismatch() {
+    fn effective_only_stale_is_still_a_mismatch_when_bios_is_known_affected() {
         let mut data = base_data();
         // Source already declares it, but grub.cfg hasn't been regenerated yet.
         data.grub_cfg_declares_reboot_arg = Some(false);
+        data.current_bios_is_known_affected = true;
+        data.registry_match = Some(BoardCompatibilityEntry {
+            vendor: "Micro-Star International".to_string(),
+            name: "MAG X870E TOMAHAWK WIFI (MS-7E59)".to_string(),
+            affected_bios_versions: vec!["2.AC3".to_string()],
+            note: "reverts EXPO profile after flash".to_string(),
+        });
         let config = config_with_reboot_args("cold", "");
         let ctx = Context {
             hostname: "tornado".to_string(),
@@ -1070,15 +1164,19 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
     fn unreadable_grub_cfg_is_not_treated_as_a_mismatch() {
         let mut data = base_data();
         data.grub_cfg_declares_reboot_arg = None;
-        let config = config_with_reboot_args("cold", "");
+        data.observed_memory_gib = Some(64); // ensure mitigation IS needed here
+        let config = config_with_memory_mismatch("cold", "", 128);
         let ctx = Context {
             hostname: "tornado".to_string(),
             config: &config,
         };
         let diagnosis = HardwareReboot.diagnose(&ctx, &observation(data));
         assert!(
-            diagnosis.compliant,
-            "None means \"can't confirm\", not \"wrong\""
+            !diagnosis
+                .findings
+                .iter()
+                .any(|f| f.contains("does not reflect")),
+            "None means \"can't confirm\", not \"wrong\" -- even when mitigation is needed"
         );
     }
 }
