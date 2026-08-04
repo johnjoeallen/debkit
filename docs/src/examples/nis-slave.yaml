@@ -1,0 +1,22 @@
+# A normal NIS client's host override file -- the recommended shape for
+# every machine that isn't the master: `role: slave` keeps shared users and
+# groups available even when the master is unreachable, once its local
+# maps have been initialized and synchronized.
+#
+# Save as ~/.config/debkit/hosts/<hostname>.yaml
+
+debkit:
+  nis:
+    enabled: true
+    role: slave
+    domain: dublinux.lan
+    master: iris.dublinux.lan
+    prefer_local: true
+    force_refresh_maps: false
+
+  # Group membership is managed by NIS here, not local /etc/group -- DebKit
+  # validates NSS/sudo policy report the expected access instead of trying
+  # to manage local group membership itself.
+  sudo_nopass:
+    enabled: true
+    nis_managed: true

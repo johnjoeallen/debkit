@@ -14,7 +14,9 @@ top — the host file only needs to declare what differs for that host:
 
 Every field has an in-code default, so a sparse file is fine. See the
 [Full Example](./config-reference.md) chapter for every section with inline comments —
-the fastest way to see the full schema in one place.
+the fastest way to see the full schema in one place — or [Example Configs](./examples/README.md)
+for smaller, realistic configs for specific situations (a minimal workstation, a NIS
+master/slave pair, a roaming laptop).
 
 ```yaml
 debkit:

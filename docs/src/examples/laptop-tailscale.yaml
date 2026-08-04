@@ -1,0 +1,43 @@
+# A laptop that roams off the home LAN: Tailscale for remote access, a
+# local dnsmasq resolver for the lab's .dublinux.lan zone while on-LAN, no
+# Wake-on-LAN (a laptop in a bag should never wake itself), and s2idle
+# instead of deep sleep -- many laptops only reliably support s2idle,
+# unlike the desktop AM5 boards in `hardware.sleep`'s other examples that
+# prefer deep S3.
+#
+# This is a full base config.yaml, not a host override -- contrast with the
+# NIS Master/Slave examples, which are host-override files layered on top
+# of a shared base.
+
+debkit:
+  host:
+    name: laptop
+
+  foundation:
+    install: [essentials, git, ripgrep, rust, npm, wake-on-lan]
+
+  tailscale:
+    enabled: true
+    magic_dns_off_lan: true
+    preserve_lan_dns: true
+
+  dns:
+    enabled: true
+    provider: dnsmasq
+    local_domains: [dublinux.lan]
+    listen: [127.0.0.1]
+    encrypted_upstream_address: "127.0.0.1:5053"
+
+  nis:
+    enabled: true
+    role: slave
+    domain: dublinux.lan
+    master: iris.dublinux.lan
+    prefer_local: true
+
+  wake_on_lan:
+    enabled: false
+
+  hardware_sleep:
+    enabled: true
+    desired_mem_sleep: s2idle
