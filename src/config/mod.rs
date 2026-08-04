@@ -192,10 +192,53 @@ pub fn host_config_path_for_home(home: &Path, hostname: &str) -> PathBuf {
         .join(format!("{}.yaml", sanitize_hostname_for_path(hostname)))
 }
 
+/// The config-owning user's home directory -- almost always what a caller actually
+/// wants, since DebKit's config lives under `~/.config/debkit/`. Deliberately NOT
+/// just `$HOME`: `sudo` resets `HOME` to the target user's home (`/root` by default,
+/// per Debian's `env_reset`/`always_set_home` sudoers defaults), so `sudo debkit
+/// apply ...` run by a real user would otherwise silently read `/root/.config/...`
+/// (normally absent, falling back to all-defaults config) instead of that user's
+/// actual declared config -- exactly the failure mode that makes an apply look
+/// "already compliant" when it isn't. When running as root via a real `sudo`
+/// invocation (`SUDO_USER` set), resolve the invoking user's home from
+/// `/etc/passwd` instead. Root logged in directly (no `SUDO_USER`) still uses
+/// `$HOME` as-is.
 pub fn home_dir() -> anyhow::Result<PathBuf> {
+    if crate::engine::exec::current_euid().ok() == Some(0)
+        && let Some(sudo_user) = std::env::var_os("SUDO_USER")
+    {
+        let sudo_user = sudo_user.to_string_lossy().trim().to_string();
+        if !sudo_user.is_empty() && sudo_user != "root" {
+            if let Some(home) = passwd_home_for_user(&sudo_user) {
+                return Ok(home);
+            }
+            return Ok(PathBuf::from(format!("/home/{sudo_user}")));
+        }
+    }
+
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME environment variable is not set")
+}
+
+fn passwd_home_for_user(user: &str) -> Option<PathBuf> {
+    let passwd = fs::read_to_string("/etc/passwd").ok()?;
+    passwd_home_for_user_from_passwd(user, &passwd)
+}
+
+fn passwd_home_for_user_from_passwd(user: &str, passwd: &str) -> Option<PathBuf> {
+    for line in passwd.lines() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        let mut fields = line.split(':');
+        if fields.next()? != user {
+            continue;
+        }
+        let home = fields.nth(4)?; // passwd, uid, gid, gecos, then home
+        return Some(PathBuf::from(home));
+    }
+    None
 }
 
 fn validate_config(config: &DebkitConfig) -> anyhow::Result<()> {
@@ -343,6 +386,33 @@ fn ensure_mapping_key<'a>(parent: &'a mut Value, key: &str) -> &'a mut Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passwd_home_lookup_finds_the_matching_user() {
+        let passwd = "root:x:0:0:root:/root:/bin/bash\njallen:x:1000:1000:John Allen,,,:/home/jallen:/bin/bash\n";
+        assert_eq!(
+            passwd_home_for_user_from_passwd("jallen", passwd),
+            Some(PathBuf::from("/home/jallen"))
+        );
+    }
+
+    #[test]
+    fn passwd_home_lookup_returns_none_for_an_unknown_user() {
+        let passwd = "root:x:0:0:root:/root:/bin/bash\n";
+        assert_eq!(
+            passwd_home_for_user_from_passwd("nobody-real", passwd),
+            None
+        );
+    }
+
+    #[test]
+    fn passwd_home_lookup_skips_comments_and_blank_lines() {
+        let passwd = "# comment\n\njallen:x:1000:1000::/home/jallen:/bin/bash\n";
+        assert_eq!(
+            passwd_home_for_user_from_passwd("jallen", passwd),
+            Some(PathBuf::from("/home/jallen"))
+        );
+    }
 
     #[test]
     fn initializes_default_config() {
