@@ -1,12 +1,13 @@
 # DebKit known-affected-BIOS registry, shipped with the .deb package to
 # /usr/share/debkit/boards/registry.yaml.
 #
-# Ships empty deliberately: fabricating board/BIOS compatibility data without
+# Deliberately conservative: fabricating board/BIOS compatibility data without
 # verified sourcing would be worse than shipping none -- a wrong "known-affected"
 # entry either causes false alarms on hardware that's actually fine, or false
 # confidence on hardware that isn't. hardware.reboot's memory-capacity check
 # still works fully without any entries here; this registry only adds the
-# separate known-affected-BIOS lookup on top.
+# separate known-affected-BIOS lookup, plus a per-board recommended_reboot_mode,
+# on top.
 #
 # If you hit a real, verified regression (a specific BIOS version that's
 # confirmed to revert memory training/EXPO/XMP, drop a DIMM, etc.), add it
@@ -21,12 +22,17 @@
 # an exact-match list, not a range: vendor BIOS version strings (MSI's
 # "2.AC3", for example) aren't a consistently orderable scheme.
 #
-# Example shape (not a real entry -- delete/replace before relying on it):
+# Entry shape:
 #
 # boards:
 #   - vendor: Some Vendor
 #     name: Some Board Name
-#     affected_bios_versions: ["1.23"]
+#     affected_bios_versions: ["1.23"]     # optional, exact-match list
 #     note: "one-sentence description of the regression and how it presents"
+#     recommended_reboot_mode: cold        # optional, "cold" or "warm"
 
-boards: []
+boards:
+  - vendor: Micro-Star International
+    name: MAG X870E TOMAHAWK WIFI (MS-7E59)
+    note: "AM5 board; use a cold reboot to force full memory retrain"
+    recommended_reboot_mode: cold

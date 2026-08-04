@@ -924,16 +924,16 @@ mod tests {
     /// SYSTEM_BOARD_REGISTRY_PATH) must always parse as valid `BoardRegistryFile`
     /// YAML, even though it deliberately has zero entries.
     #[test]
-    fn packaged_registry_file_parses_as_a_valid_empty_registry() {
+    fn packaged_registry_file_parses_as_valid_yaml() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/boards/registry.yaml");
         let raw = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
         let file: BoardRegistryFile =
             serde_yaml_ng::from_str(&raw).expect("packaged registry.yaml must be valid YAML");
-        assert!(
-            file.boards.is_empty(),
-            "packaged registry ships empty by design -- see its own header comment"
-        );
+        for entry in &file.boards {
+            assert!(!entry.vendor.is_empty(), "entry has an empty vendor");
+            assert!(!entry.name.is_empty(), "entry has an empty name");
+        }
     }
 
     fn observation(data: HardwareRebootObservation) -> Observation {

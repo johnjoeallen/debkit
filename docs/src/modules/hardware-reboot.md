@@ -66,10 +66,11 @@ those literal values — this file gets written into `/etc/default/grub`, which
 `update-grub` sources as a shell script, so closing that injection surface matters
 more here than almost anywhere else in this codebase.
 
-The known-affected-BIOS registry ships **deliberately empty** in the .deb-packaged
-system copy (`/usr/share/debkit/boards/registry.yaml`): fabricating compatibility
-data without verified sourcing would be worse than shipping none. The mechanism is
-real, and merges across three tiers — the compiled-in (empty) default, the
+The known-affected-BIOS registry is deliberately conservative about what ships in
+the .deb-packaged system copy (`/usr/share/debkit/boards/registry.yaml`):
+fabricating compatibility data without verified sourcing would be worse than
+shipping none, so it only ever grows entries with real, verified sourcing. It
+merges across three tiers — the compiled-in (empty) default, the
 .deb-packaged system registry, then `~/.config/debkit/boards/registry.yaml` — with
 each later tier overriding an earlier one on a matching `vendor`+`name`. A match
 against the current BIOS version produces a `diagnose()` finding quoting the entry's
