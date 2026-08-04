@@ -23,7 +23,7 @@ have a config section; each page below shows every field, annotated.
 | [systemd.units](./systemd-units.md) | none | Read-only report of currently failed systemd units |
 | [developer.git](./developer-git.md) | `git` | Global git credential helper and credential-store permissions |
 | [apt.repositories](./apt-repositories.md) | `apt` | apt-cacher-ng proxy config and DIRECT-bypass exceptions |
-| [hardware.reboot](./hardware-reboot.md) | `hardware_reboot` | AM5 board/BIOS identification, memory-capacity check |
+| [hardware.grub](./hardware-grub.md) | `hardware_grub` | AM5 board/BIOS identification, memory-capacity check, GRUB `reboot=`/`GRUB_GFXMODE`/`GRUB_GFXPAYLOAD_LINUX` boot parameters |
 | [hardware.sleep](./hardware-sleep.md) | `hardware_sleep` | Suspend/resume diagnostics, active `mem_sleep` mode |
 | [hardware.rgb](./hardware-rgb.md) | `hardware_rgb` | `i2c-dev` prerequisite for motherboard/SMBus RGB control |
 

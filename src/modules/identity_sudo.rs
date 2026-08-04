@@ -30,6 +30,10 @@ impl Module for IdentitySudo {
         "identity.sudo"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("sudo_nopass")
+    }
+
     fn description(&self) -> &'static str {
         "passwordless-sudo group, NOPASSWD drop-in, and membership management"
     }

@@ -28,7 +28,7 @@
     - [systemd.units](./modules/systemd-units.md)
     - [developer.git](./modules/developer-git.md)
     - [apt.repositories](./modules/apt-repositories.md)
-    - [hardware.reboot](./modules/hardware-reboot.md)
+    - [hardware.grub](./modules/hardware-grub.md)
     - [hardware.sleep](./modules/hardware-sleep.md)
     - [hardware.rgb](./modules/hardware-rgb.md)
 - [Configuration](./configuration.md)

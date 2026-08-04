@@ -95,6 +95,18 @@ pub trait Module {
     /// One-line human-facing summary, shown by `debkit list`.
     fn description(&self) -> &'static str;
 
+    /// The config section key this module's plain `enabled: bool` gate lives under
+    /// (e.g. `"hardware_grub"` for `hardware.grub`, `"sudo_nopass"` for
+    /// `identity.sudo`) — used by `debkit enable <module>` to know where to write
+    /// `enabled: true`. `None` (the default) covers both genuinely diagnostic-only
+    /// modules with no config section at all (`core.inspect`, `network.dhcp`, ...)
+    /// and modules gated some other way (`identity.pam` gates on
+    /// `create_home_on_first_login`; `network.interfaces` has no gate at all) — either
+    /// way, `debkit enable` has nothing sensible to flip for them.
+    fn config_key(&self) -> Option<&'static str> {
+        None
+    }
+
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation>;
 
     fn diagnose(&self, ctx: &Context, observation: &Observation) -> Diagnosis;

@@ -1,9 +1,22 @@
 # DebKit v2 sample configuration.
 #
-# Lives at ~/.config/debkit/config.yaml (shared defaults), with optional per-host
-# overrides at ~/.config/debkit/hosts/<hostname>.yaml deep-merged on top -- a host
-# file only needs to declare what differs for that host. Every field has an in-code
-# default, so a sparse file is completely fine.
+# This file IS the .deb package's /etc/debkit/config.yaml -- it's installed there
+# verbatim as a dpkg conffile (see Cargo.toml's [package.metadata.deb] assets),
+# provisioned by `apt install`/upgrade and never clobbered on a later upgrade if
+# you've edited it. That's the global tier, deep-merged with two further optional,
+# per-user tiers on top -- each only needs to declare what differs from the tier
+# below it:
+#
+#   /etc/debkit/config.yaml                    (global -- this file, as packaged)
+#   ~/.config/debkit/config.yaml                (per-user base)
+#   ~/.config/debkit/hosts/<hostname>.yaml       (per-user host overlay)
+#
+# Every field has an in-code default, so a sparse file at any tier is completely
+# fine -- including a missing one. DebKit is mostly not a per-user tool: most
+# module config here (hardware_grub, network_*, identity_*, apt, pam,
+# systemd_units) describes the machine, not the operator running it, so the global
+# tier is the natural home for it. Genuinely personal preferences -- npm.version,
+# wallpapers, variety, git.credential_helper -- fit better in the per-user tiers.
 #
 # This file shows every section with every field set to its real default value,
 # annotated with the available options and which one suits most hosts. It's a
@@ -13,7 +26,7 @@
 # see the Example Configs chapter in the docs instead.
 #
 # Sections with a `plan()` that can propose real changes (sudo_nopass, nis,
-# wake_on_lan, git, apt, pam, network_interfaces, dns, hardware_reboot,
+# wake_on_lan, git, apt, pam, network_interfaces, dns, hardware_grub,
 # hardware_sleep, hardware_rgb) only act when that section's gate field is truthy
 # (usually `enabled: true` -- pam gates on `create_home_on_first_login` instead, and
 # network_interfaces has no gate at all since an empty `links` list is already a
@@ -228,7 +241,7 @@ debkit:
     # default) means none declared. Rendered as `server=<address>`.
     encrypted_upstream_address: ""
 
-  hardware_reboot:
+  hardware_grub:
     # The memory-capacity and known-affected-BIOS findings below have no
     # automated fix -- DebKit can't reseat a DIMM or safely choose to flash a
     # BIOS for you. What plan()/apply() DO manage is the shared underlying
@@ -247,18 +260,42 @@ debkit:
     # reverting to JEDEC needs `dmidecode --type 17` and root, out of scope).
     expected_memory_gib: 0
     # Known-affected BIOS versions are NOT configured here -- the registry ships
-    # empty by design and lives instead at ~/.config/debkit/boards/registry.yaml,
-    # matched on normalized board_vendor/board_name. A match only ever produces
+    # empty by design and lives instead at /etc/debkit/boards/registry.yaml (also
+    # packaged by the .deb, same as this file), matched on normalized
+    # board_vendor/board_name. A match only ever produces
     # a diagnose() finding quoting that entry's `note` -- it never triggers a
-    # BIOS flash directly. See hardware.reboot in the Module Reference for the
-    # file format.
-    # "cold" (the default) or "warm" -- the first component of the kernel's
-    # reboot= parameter (man 2 reboot, LINUX_REBOOT_CMD_RESTART2). "cold" sets
-    # the BIOS cold-boot flag, forcing full memory retraining on every reboot.
-    reboot_mode: cold
+    # BIOS flash directly. A registry entry can also carry a
+    # recommended_reboot_mode, used below when reboot_mode is left empty. See
+    # hardware.grub in the Module Reference for the file format.
+    # "cold" or "warm" -- the first component of the kernel's reboot= parameter
+    # (man 2 reboot, LINUX_REBOOT_CMD_RESTART2). "cold" sets the BIOS cold-boot
+    # flag, forcing full memory retraining on every reboot. Empty (the default)
+    # defers to the matched registry entry's recommended_reboot_mode, if any,
+    # and only then falls back to "cold" -- an explicit value here always wins
+    # over the registry.
+    reboot_mode: ""
     # Optional second component of the same reboot= syntax: "bios", "acpi",
     # "kbd", "triple", "efi", "pci", or empty (default -- let the kernel pick).
     reboot_type: ""
+    # Boot-time display resolution, set into GRUB's own GRUB_GFXMODE (the
+    # boot menu's resolution) and GRUB_GFXPAYLOAD_LINUX (the resolution
+    # handed to the kernel/KMS at boot) -- both from this one value, kept
+    # in sync. Simple "<columns>x<rows>" form, e.g. "1024x768", or empty
+    # (default -- not declared, don't touch grub for this); both
+    # components must be plain positive-integer pixel counts. Unlike
+    # reboot_mode above, which is only ever applied once a memory/BIOS
+    # mismatch is actually confirmed, declaring video_mode here is by
+    # itself a direct instruction to apply it -- there's no detection
+    # step for a display mode. See hardware.grub in the Module Reference.
+    video_mode: ""
+    # Seconds GRUB waits at the boot menu before booting the default entry,
+    # set into the standalone GRUB_TIMEOUT line. Empty/unset (the default)
+    # means "not declared, don't touch it." Like video_mode above, declaring
+    # this is by itself a direct instruction to apply it -- there's no
+    # detection step for a boot timeout. 0 is a legitimate, distinct value
+    # (skip the menu delay entirely), so it means something different from
+    # leaving this unset.
+    timeout: 15
 
   hardware_sleep:
     enabled: false

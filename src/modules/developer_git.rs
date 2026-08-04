@@ -39,6 +39,10 @@ impl Module for DeveloperGit {
         "developer.git"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("git")
+    }
+
     fn description(&self) -> &'static str {
         "global git credential.helper and credential-store file permissions"
     }

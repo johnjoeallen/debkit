@@ -46,6 +46,10 @@ impl Module for NetworkDns {
         "network.dns"
     }
 
+    fn config_key(&self) -> Option<&'static str> {
+        Some("dns")
+    }
+
     fn description(&self) -> &'static str {
         "declarative dnsmasq local zones/upstream, resolver-conflict detection, dig verify"
     }
