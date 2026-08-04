@@ -23,8 +23,9 @@
 #   debkit apply     <module>   # apply + verify, with automatic rollback on failure
 #   debkit verify    <module>   # functional checks only, e.g. after a reboot
 #
-# The values below labeled "observed on tornado" reflect this machine's actual
-# state, confirmed live with `debkit inspect` while building these modules.
+# The values below labeled "observed on one specific machine" reflect a real
+# host's actual state, confirmed live with `debkit inspect` while building these
+# modules -- not fabricated-but-plausible placeholder data.
 # Everything else is an illustrative placeholder -- adjust to match your host.
 
 debkit:
@@ -32,7 +33,7 @@ debkit:
     # Usually left unset -- auto-detected from `hostname` at load time and used to
     # pick which hosts/<name>.yaml overlay to merge. Only set this if you need to
     # force a specific value.
-    name: tornado
+    name: devbox
 
   # ------------------------------------------------------------------
   # Legacy installer targets (install::*) -- plain idempotent installers,
@@ -94,8 +95,8 @@ debkit:
     nis_managed: false
 
   nis:
-    # observed on tornado: already an NIS client, domain dublinux.lan, bound to
-    # 10.0.0.1 -- this declares that state rather than changing it.
+    # observed on one specific machine: already an NIS client, domain dublinux.lan,
+    # bound to 10.0.0.1 -- this declares that state rather than changing it.
     enabled: true
     # master | slave | client (validated). slave is recommended for normal
     # machines -- keeps shared accounts available if the master is briefly
@@ -141,7 +142,7 @@ debkit:
     backend: network_manager
     # Hostname recorded in the wake-info evidence written after apply. Defaults
     # to the current hostname if left blank.
-    reference_host: tornado
+    reference_host: devbox
 
   git:
     enabled: true
@@ -155,10 +156,10 @@ debkit:
     credential_store_file: ""
 
   apt:
-    # observed on tornado: real apt-cacher-ng proxy at iris:3142. pkg.tailscale.com
-    # is the fix for a real gap found during testing -- it was missing from the
-    # DIRECT-bypass list, so Tailscale's own apt repo silently went through the
-    # proxy instead of straight to the internet.
+    # observed on one specific machine: real apt-cacher-ng proxy at iris:3142.
+    # pkg.tailscale.com is the fix for a real gap found during testing -- it was
+    # missing from the DIRECT-bypass list, so Tailscale's own apt repo silently
+    # went through the proxy instead of straight to the internet.
     enabled: true
     # e.g. "http://<host>:3142" for an apt-cacher-ng proxy. Empty means no proxy
     # is declared/managed.
@@ -189,7 +190,7 @@ debkit:
         name: lan0
 
   tailscale:
-    # not installed on tornado -- diagnose()/plan() report compliant while
+    # not installed on that machine -- diagnose()/plan() report compliant while
     # disabled, regardless of what discover() observes.
     enabled: false
     # Informational only -- surfaced in the Observation as context, never
@@ -200,7 +201,7 @@ debkit:
     preserve_lan_dns: true
 
   dns:
-    # tornado's resolv.conf is NetworkManager-owned, not dnsmasq -- left disabled.
+    # that machine's resolv.conf is NetworkManager-owned, not dnsmasq -- left disabled.
     enabled: false
     # Only "dnsmasq" is declaratively managed today. Any other value (or empty)
     # means "diagnose only, never touch anything."
@@ -216,7 +217,7 @@ debkit:
     encrypted_upstream_address: "127.0.0.1:5053"
 
   hardware_reboot:
-    # observed on tornado: 128 GiB installed (MSI MAG X870E TOMAHAWK WIFI, AM5).
+    # observed on one specific machine: 128 GiB installed (an AM5 desktop board).
     enabled: true
     # Declared installed RAM, in GiB, rounded to the nearest common size (8, 16,
     # 32, 64, 96, 128, ...). 0 means "not declared, don't check." Compared
@@ -231,8 +232,8 @@ debkit:
     # Module Reference for the file format.
 
   hardware_sleep:
-    # observed on tornado: mem_sleep is already "deep" -- this declares it so
-    # drift (e.g. after a BIOS reset) gets caught and reapplied.
+    # observed on one specific machine: mem_sleep is already "deep" -- this declares
+    # it so drift (e.g. after a BIOS reset) gets caught and reapplied.
     enabled: true
     # "s2idle", "deep", or "" (don't enforce) -- validated against exactly these
     # three values. Runtime-only: reverts to the kernel/firmware default on next
@@ -241,8 +242,9 @@ debkit:
     desired_mem_sleep: deep
 
   hardware_rgb:
-    # observed on tornado: i2c-piix4 (SMBus adapter) is loaded but i2c-dev is
-    # not, so no /dev/i2c-* nodes exist and RGB control silently doesn't work.
+    # observed on one specific machine: i2c-piix4 (SMBus adapter) is loaded but
+    # i2c-dev is not, so no /dev/i2c-* nodes exist and RGB control silently
+    # doesn't work.
     # Enabling this declares and loads i2c-dev to fix exactly that -- the only
     # field this module has. No device/color/profile management; see
     # hardware.rgb in the Module Reference for why.

@@ -21,7 +21,7 @@ debkit:
     backend: network_manager
     # Used in the wake-info evidence written after apply -- defaults to the
     # current hostname if left blank.
-    reference_host: tornado
+    reference_host: devbox
 ```
 
 `apply()` writes `/var/lib/debkit/wake-on-lan/<hostname>.{txt,json}` with the wake
