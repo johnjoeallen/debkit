@@ -229,6 +229,10 @@ debkit:
     encrypted_upstream_address: ""
 
   hardware_reboot:
+    # This whole module is diagnostic-only: plan()/apply() never do anything for
+    # it, for either field below -- no grub/bootloader changes, no automated fix
+    # of any kind. It only ever surfaces a diagnose() finding for a human to act
+    # on (reseat a DIMM, adjust a BIOS setting, decide whether to flash).
     enabled: false
     # Set to your actual installed RAM, in GiB, rounded to the nearest common
     # size (8, 16, 32, 64, 96, 128, ...). 0 (the default) means "not declared,
@@ -239,8 +243,10 @@ debkit:
     expected_memory_gib: 0
     # Known-affected BIOS versions are NOT configured here -- the registry ships
     # empty by design and lives instead at ~/.config/debkit/boards/registry.yaml,
-    # matched on normalized board_vendor/board_name. See hardware.reboot in the
-    # Module Reference for the file format.
+    # matched on normalized board_vendor/board_name. A match only ever produces
+    # a diagnose() finding quoting that entry's `note` -- it never triggers a
+    # BIOS flash or anything else. See hardware.reboot in the Module Reference
+    # for the file format.
 
   hardware_sleep:
     enabled: false
