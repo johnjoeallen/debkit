@@ -245,6 +245,17 @@ fn validate_config(config: &DebkitConfig) -> anyhow::Result<()> {
     ) {
         bail!("`hardware_sleep.desired_mem_sleep` must be one of `s2idle`, `deep`, or empty");
     }
+    if !matches!(config.hardware_reboot.reboot_mode.as_str(), "cold" | "warm") {
+        bail!("`hardware_reboot.reboot_mode` must be one of `cold` or `warm`");
+    }
+    if !matches!(
+        config.hardware_reboot.reboot_type.as_str(),
+        "" | "bios" | "acpi" | "kbd" | "triple" | "efi" | "pci"
+    ) {
+        bail!(
+            "`hardware_reboot.reboot_type` must be one of `bios`, `acpi`, `kbd`, `triple`, `efi`, `pci`, or empty"
+        );
+    }
     Ok(())
 }
 

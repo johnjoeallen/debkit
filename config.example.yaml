@@ -229,10 +229,15 @@ debkit:
     encrypted_upstream_address: ""
 
   hardware_reboot:
-    # This whole module is diagnostic-only: plan()/apply() never do anything for
-    # it, for either field below -- no grub/bootloader changes, no automated fix
-    # of any kind. It only ever surfaces a diagnose() finding for a human to act
-    # on (reseat a DIMM, adjust a BIOS setting, decide whether to flash).
+    # The memory-capacity and known-affected-BIOS findings below have no
+    # automated fix -- DebKit can't reseat a DIMM or safely choose to flash a
+    # BIOS for you. What plan()/apply() DO manage is the shared underlying
+    # mitigation for both: persisting reboot_mode/reboot_type into
+    # /etc/default/grub and regenerating /boot/grub/grub.cfg via update-grub,
+    # so every future reboot forces a full memory retrain (both findings stem
+    # from a *warm* reboot skipping that retrain). This is the highest-risk
+    # write in DebKit -- a bad grub edit can leave a system unbootable -- so
+    # both changes are Risk::High in `debkit plan` output.
     enabled: false
     # Set to your actual installed RAM, in GiB, rounded to the nearest common
     # size (8, 16, 32, 64, 96, 128, ...). 0 (the default) means "not declared,
@@ -245,8 +250,15 @@ debkit:
     # empty by design and lives instead at ~/.config/debkit/boards/registry.yaml,
     # matched on normalized board_vendor/board_name. A match only ever produces
     # a diagnose() finding quoting that entry's `note` -- it never triggers a
-    # BIOS flash or anything else. See hardware.reboot in the Module Reference
-    # for the file format.
+    # BIOS flash directly. See hardware.reboot in the Module Reference for the
+    # file format.
+    # "cold" (the default) or "warm" -- the first component of the kernel's
+    # reboot= parameter (man 2 reboot, LINUX_REBOOT_CMD_RESTART2). "cold" sets
+    # the BIOS cold-boot flag, forcing full memory retraining on every reboot.
+    reboot_mode: cold
+    # Optional second component of the same reboot= syntax: "bios", "acpi",
+    # "kbd", "triple", "efi", "pci", or empty (default -- let the kernel pick).
+    reboot_type: ""
 
   hardware_sleep:
     enabled: false
