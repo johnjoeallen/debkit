@@ -28,7 +28,7 @@ debkit:
     role: slave
     domain: dublinux.lan
     # Defaults to $SUDO_USER or $USER if left blank.
-    admin_user: jallen
+    admin_user: alex
     local_admin_groups: [sudo]
     # Required when role: slave.
     master: iris.dublinux.lan

@@ -43,7 +43,7 @@ debkit:
   wallpapers:
     # Folder Variety rotates wallpapers from. Empty string (the default) means
     # unset -- `debkit install variety` will warn if the folder doesn't exist.
-    folder: /home/jallen/Pictures/Wallpapers
+    folder: /home/alex/Pictures/Wallpapers
 
   variety:
     # Must be greater than 0 (validated at config load). Written into Variety's own
@@ -106,7 +106,7 @@ debkit:
     domain: dublinux.lan
     # Defaults to $SUDO_USER or $USER if left blank; required (non-empty) when
     # enabled (validated).
-    admin_user: jallen
+    admin_user: alex
     # Local groups checked for NIS/local admin-membership consistency.
     local_admin_groups: [sudo]
     # Required when role: slave (validated). Empty here since this host is

@@ -18,7 +18,7 @@ debkit:
     enabled: false
     role: slave
     domain: dublinux.lan
-    admin_user: jallen
+    admin_user: alex
     local_admin_groups: [sudo]
     master: iris.dublinux.lan
     server: iris.dublinux.lan
@@ -37,7 +37,7 @@ debkit:
     enabled: true
     role: master
     domain: dublinux.lan
-    admin_user: jallen
+    admin_user: alex
     local_admin_groups: [sudo]
     push_to_slaves: true
     slaves: [spitfire.dublinux.lan, laptop.dublinux.lan]
