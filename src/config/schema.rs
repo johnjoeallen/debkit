@@ -5,7 +5,6 @@ pub const DEFAULT_INTERVAL_MINUTES: u32 = 10;
 pub const DEFAULT_FOUNDATION_INSTALL: &[&str] = &[
     "essentials",
     "git",
-    "ripgrep",
     "rust",
     "npm",
     "codex",
@@ -23,6 +22,7 @@ pub const DEFAULT_ESSENTIAL_PACKAGES: &[&str] = &[
     "gnupg",
     "apt-transport-https",
     "neovim",
+    "ripgrep",
 ];
 pub const DEFAULT_NPM_VERSION: &str = "latest";
 pub const DEFAULT_WOL_MODE: &str = "magic";

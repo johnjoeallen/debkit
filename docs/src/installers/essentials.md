@@ -13,8 +13,13 @@ apt-wise.
 debkit:
   essentials:
     packages:
-      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim]
+      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim, ripgrep]
 ```
+
+`ripgrep` is a default essentials package rather than its own `foundation.install`
+entry — see [ripgrep](./ripgrep.md) for the standalone `debkit install/uninstall
+ripgrep` target, which still exists for surgical install/removal independent of the
+rest of essentials.
 
 An empty or unset `packages` list falls back to DebKit's built-in defaults (shown
 above) rather than installing nothing. To skip essentials entirely, leave it out of

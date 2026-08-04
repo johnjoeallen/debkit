@@ -12,7 +12,7 @@ nothing — there's no implicit default set run in its place.
 ```yaml
 debkit:
   foundation:
-    install: [essentials, git, ripgrep, rust, npm, codex, variety, nis, wake-on-lan]
+    install: [essentials, git, rust, npm, codex, variety, nis, wake-on-lan]
 ```
 
 Recognized target names (unknown names are skipped with a warning, not a hard error —
@@ -24,7 +24,7 @@ a typo in this list won't abort the rest of the run):
 | `git` | | [Git](./git.md) |
 | `npm` | | [Node.js / npm](./npm.md) |
 | `codex` | | [Codex CLI](./codex.md) |
-| `ripgrep` | | [ripgrep](./ripgrep.md) |
+| `ripgrep` | | [ripgrep](./ripgrep.md) — not in the default list above; `ripgrep` ships as a default [essentials](./essentials.md) package instead |
 | `rust` | | [Rust](./rust.md) (never with `--reinstall`) |
 | `variety` | | [Variety](./variety.md) |
 | `sudo-nopass` | `sudo_nopass`, `admin-group-nopass`, `admin_group_nopass` | [Passwordless Sudo](../sudo.md) |

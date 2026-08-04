@@ -346,7 +346,6 @@ mod tests {
             vec![
                 "essentials",
                 "git",
-                "ripgrep",
                 "rust",
                 "npm",
                 "codex",

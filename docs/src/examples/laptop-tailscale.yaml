@@ -14,7 +14,7 @@ debkit:
     name: laptop
 
   foundation:
-    install: [essentials, git, ripgrep, rust, npm, wake-on-lan]
+    install: [essentials, git, rust, npm, wake-on-lan]
 
   tailscale:
     enabled: true

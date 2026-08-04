@@ -8,7 +8,7 @@ Given a shared base `~/.config/debkit/config.yaml`:
 ```yaml
 debkit:
   foundation:
-    install: [essentials, git, ripgrep, rust, npm, wake-on-lan]
+    install: [essentials, git, rust, npm, wake-on-lan]
   wake_on_lan:
     enabled: true
     backend: network_manager

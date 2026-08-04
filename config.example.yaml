@@ -40,11 +40,13 @@ debkit:
     interval_minutes: 10
 
   foundation:
-    install: [essentials, git, ripgrep, rust, npm, codex, variety, nis, wake-on-lan]
+    install: [essentials, git, rust, npm, codex, variety, nis, wake-on-lan]
 
+  # ripgrep is one of the default essentials packages -- there's no separate
+  # `ripgrep` entry in foundation.install above.
   essentials:
     packages:
-      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim]
+      [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim, ripgrep]
 
   npm:
     version: latest
