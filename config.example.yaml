@@ -3,15 +3,18 @@
 # Lives at ~/.config/debkit/config.yaml (shared defaults), with optional per-host
 # overrides at ~/.config/debkit/hosts/<hostname>.yaml deep-merged on top -- a host
 # file only needs to declare what differs for that host. Every field has an in-code
-# default, so a sparse file is completely fine; this file shows every section for
-# reference.
+# default, so a sparse file is completely fine; this file shows every section, with
+# every field commented, for reference.
 #
 # Sections with a `plan()` that can propose real changes (sudo_nopass, nis,
 # wake_on_lan, git, apt, pam, network_interfaces, dns, hardware_reboot,
-# hardware_sleep, hardware_rgb) only act when that section's `enabled: true`.
-# Purely-diagnostic modules -- network.dhcp, network.firewall, systemd.units,
-# identity.nss, core.inspect, developer.git's read side -- have no config section
-# at all and always run read-only regardless of this file.
+# hardware_sleep, hardware_rgb) only act when that section's gate field is truthy
+# (usually `enabled: true` -- pam gates on `create_home_on_first_login` instead, and
+# network_interfaces has no gate at all since an empty `links` list is already a
+# no-op). Purely-diagnostic modules -- network.dhcp, network.firewall, systemd.units,
+# identity.nss, core.inspect, developer.git's read side -- have no config section at
+# all and always run read-only regardless of this file. See the Module Reference in
+# the docs for the full discover()/diagnose()/plan() scope of each one.
 #
 # Try any section with:
 #   debkit inspect   <module>   # discover() only
@@ -26,71 +29,130 @@
 
 debkit:
   host:
+    # Usually left unset -- auto-detected from `hostname` at load time and used to
+    # pick which hosts/<name>.yaml overlay to merge. Only set this if you need to
+    # force a specific value.
     name: tornado
 
   # ------------------------------------------------------------------
   # Legacy installer targets (install::*) -- plain idempotent installers,
-  # not part of the discover/diagnose/plan/apply/verify lifecycle.
+  # not part of the discover/diagnose/plan/apply/verify lifecycle. See the
+  # Installers chapter in the docs for what each target actually does.
   # ------------------------------------------------------------------
 
   wallpapers:
+    # Folder Variety rotates wallpapers from. Empty string (the default) means
+    # unset -- `debkit install variety` will warn if the folder doesn't exist.
     folder: /home/jallen/Pictures/Wallpapers
 
   variety:
+    # Must be greater than 0 (validated at config load). Written into Variety's own
+    # config file by `debkit install variety`.
     interval_minutes: 10
 
   foundation:
+    # Targets `debkit install foundation` runs, in order. Recognized names (plus
+    # aliases like `base`/`wol`) are documented in Installers > Foundation. An
+    # unknown name warns and is skipped rather than aborting the whole run.
     install: [essentials, git, rust, npm, codex, variety, nis, wake-on-lan]
 
-  # ripgrep is one of the default essentials packages -- there's no separate
-  # `ripgrep` entry in foundation.install above.
   essentials:
+    # apt packages `debkit install essentials` ensures are present (only runs
+    # `apt-get update` if something's actually missing). An empty or unset list
+    # falls back to DebKit's built-in defaults shown below -- there's no way to
+    # configure "install nothing" here; leave `essentials` out of
+    # `foundation.install` instead. ripgrep is a default essentials package rather
+    # than its own foundation.install entry.
     packages:
       [curl, wget, zip, unzip, rsync, ca-certificates, gnupg, apt-transport-https, neovim, ripgrep]
 
   npm:
+    # Node.js version `debkit install npm`/`codex` installs from the official
+    # upstream binary tarballs (not apt, not nvm) into a per-user managed
+    # directory. "latest" or an explicit version string; must not be empty
+    # (validated). Installing a different version doesn't remove the old one, but
+    # does switch which one a `current` symlink -- and therefore PATH -- points at.
     version: latest
 
   # ------------------------------------------------------------------
-  # Lifecycle modules
+  # Lifecycle modules -- see the Module Reference chapter in the docs for
+  # each module's discover()/diagnose()/plan()/verify() behavior.
   # ------------------------------------------------------------------
 
   sudo_nopass:
     enabled: true
+    # Local group name the NOPASSWD sudoers drop-in applies to. Must not be empty
+    # (validated). The standard %sudo rule is added if missing, never removed.
     group: superuser
+    # Automatically add the invoking user to `group` (skipped if `nis_managed`).
     add_current_user: true
+    # Additional usernames to add to `group`, beyond the current user.
     users: []
     # true if this group's membership is managed via NIS netgroups instead of
-    # local /etc/group -- skips the local group-creation step.
+    # local /etc/group -- skips the local group-creation step; this module then
+    # only validates that NSS/sudo policy report the expected no-password access.
     nis_managed: false
 
   nis:
     # observed on tornado: already an NIS client, domain dublinux.lan, bound to
     # 10.0.0.1 -- this declares that state rather than changing it.
     enabled: true
-    role: client              # master | slave | client
+    # master | slave | client (validated). slave is recommended for normal
+    # machines -- keeps shared accounts available if the master is briefly
+    # unreachable, once local maps are initialized. client is for machines that
+    # don't need offline account availability.
+    role: client
+    # Required (non-empty) when enabled (validated).
     domain: dublinux.lan
+    # Defaults to $SUDO_USER or $USER if left blank; required (non-empty) when
+    # enabled (validated).
     admin_user: jallen
+    # Local groups checked for NIS/local admin-membership consistency.
     local_admin_groups: [sudo]
+    # Required when role: slave (validated). Empty here since this host is
+    # role: client, which uses `server`/`servers` instead.
     master: ""
+    # Required when role: client and `servers` is empty (validated).
     server: "10.0.0.1"
+    # slave only: prefer the local ypserv (127.0.0.1) over the master once local
+    # maps exist -- never applied before local maps are actually initialized, to
+    # avoid the classic "slave prefers itself before it has any data" failure.
     prefer_local: true
+    # master only: push the rebuilt map set to `slaves` via yppush.
     push_to_slaves: false
+    # slave only: force a direct ypxfr pull instead of the normal ypinit -s path.
     force_refresh_maps: false
+    # master only: FQDNs written into /var/yp/ypservers.
     slaves: []
+    # client only, alternative to `server`: a list of candidate NIS servers.
     servers: []
 
   wake_on_lan:
+    # Unlike every other module, this defaults to true -- Wake-on-LAN is treated
+    # as an opt-out, not opt-in, feature.
     enabled: true
-    interfaces: auto           # or an explicit list: [enp5s0]
+    # "auto" (autodetect wired interfaces) or an explicit list: [enp5s0].
+    interfaces: auto
+    # Only "magic" is currently supported (validated).
     mode: magic
-    backend: network_manager   # network_manager | ethtool | auto
+    # network_manager | ethtool | auto (validated). auto tries NetworkManager
+    # first when available/managing the interface with an active profile;
+    # otherwise falls back to ethtool via a debkit-wol@<interface>.service unit.
+    backend: network_manager
+    # Hostname recorded in the wake-info evidence written after apply. Defaults
+    # to the current hostname if left blank.
     reference_host: tornado
 
   git:
     enabled: true
-    credential_helper: store   # store | cache | none | an explicit command
-    credential_store_file: ""  # empty = git's own default (~/.git-credentials)
+    # store | cache | none | an explicit `credential.helper` command string. Must
+    # not be empty when enabled (validated). Only the invoking user's global
+    # scope (~/.gitconfig or ~/.config/git/config) is managed -- system or
+    # per-repo scope is flagged but left alone.
+    credential_helper: store
+    # Only consulted when credential_helper: store. Empty means git's own default
+    # (~/.git-credentials). Checked for 0600 permissions.
+    credential_store_file: ""
 
   apt:
     # observed on tornado: real apt-cacher-ng proxy at iris:3142. pkg.tailscale.com
@@ -98,49 +160,90 @@ debkit:
     # DIRECT-bypass list, so Tailscale's own apt repo silently went through the
     # proxy instead of straight to the internet.
     enabled: true
+    # e.g. "http://<host>:3142" for an apt-cacher-ng proxy. Empty means no proxy
+    # is declared/managed.
     proxy: "http://iris:3142"
+    # Hosts that bypass `proxy` via a per-host DIRECT override -- repos with their
+    # own CDN that shouldn't go through the cache.
     direct_hosts: [pkg.tailscale.com]
 
   pam:
+    # The gate for this module -- there's no separate `enabled` field.
     create_home_on_first_login: false
+    # Which /etc/pam.d/<service> files get a pam_mkhomedir.so line appended.
+    # Services whose PAM file doesn't exist on this host are skipped, not an error.
     services: [login, sshd]
+    # Rendered into the appended line as `skel=<skeleton>`.
     skeleton: /etc/skel
+    # Rendered into the appended line as `umask=<umask>`, giving the final line:
+    # `session optional pam_mkhomedir.so umask=<umask> skel=<skeleton>`
     umask: "0022"
 
   network_interfaces:
-    # stable NIC naming only (systemd .link files) -- takes effect on next
+    # Zero or more MAC -> stable-name declarations. No gate field -- an empty
+    # list is naturally a no-op. Each entry renders a
+    # /etc/systemd/network/10-debkit-<name>.link file; takes effect on next
     # boot/udev reload, never live. Replace with a real MAC for your host.
     links:
       - mac: "aa:bb:cc:dd:ee:ff"
         name: lan0
 
   tailscale:
-    # not installed on tornado -- left disabled; diagnostics still run if enabled.
+    # not installed on tornado -- diagnose()/plan() report compliant while
+    # disabled, regardless of what discover() observes.
     enabled: false
+    # Informational only -- surfaced in the Observation as context, never
+    # enforced (mapping this onto `tailscale set --accept-dns=...` isn't
+    # something this module can confidently automate without a live install to
+    # validate against).
     magic_dns_off_lan: true
     preserve_lan_dns: true
 
   dns:
     # tornado's resolv.conf is NetworkManager-owned, not dnsmasq -- left disabled.
     enabled: false
+    # Only "dnsmasq" is declaratively managed today. Any other value (or empty)
+    # means "diagnose only, never touch anything."
     provider: dnsmasq
+    # Rendered as `local=/<domain>/` + `domain=<domain>` per entry -- an
+    # authoritative local zone, so lookups for it never leak upstream and come
+    # back NXDOMAIN.
     local_domains: [dublinux.lan]
+    # Rendered as `listen-address=<a>,<b>,...`.
     listen: ["127.0.0.1", "10.0.0.1"]
+    # e.g. a local dnscrypt-proxy/similar. Empty means none declared. Rendered as
+    # `server=<address>`.
     encrypted_upstream_address: "127.0.0.1:5053"
 
   hardware_reboot:
     # observed on tornado: 128 GiB installed (MSI MAG X870E TOMAHAWK WIFI, AM5).
     enabled: true
+    # Declared installed RAM, in GiB, rounded to the nearest common size (8, 16,
+    # 32, 64, 96, 128, ...). 0 means "not declared, don't check." Compared
+    # against /proc/meminfo's MemTotal (also rounded up) -- a coarse, root-free,
+    # no-dmidecode capacity check that catches a DIMM going undetected after a
+    # reboot/BIOS change. Not a speed check (EXPO/XMP reverting to JEDEC needs
+    # `dmidecode --type 17` and root, out of scope).
     expected_memory_gib: 128
+    # Known-affected BIOS versions are NOT configured here -- the registry ships
+    # empty by design and lives instead at ~/.config/debkit/boards/registry.yaml,
+    # matched on normalized board_vendor/board_name. See hardware.reboot in the
+    # Module Reference for the file format.
 
   hardware_sleep:
     # observed on tornado: mem_sleep is already "deep" -- this declares it so
     # drift (e.g. after a BIOS reset) gets caught and reapplied.
     enabled: true
-    desired_mem_sleep: deep    # s2idle | deep | "" (don't enforce)
+    # "s2idle", "deep", or "" (don't enforce) -- validated against exactly these
+    # three values. Runtime-only: reverts to the kernel/firmware default on next
+    # boot unless a mem_sleep_default= kernel parameter is also set (a
+    # bootloader edit, out of scope here).
+    desired_mem_sleep: deep
 
   hardware_rgb:
     # observed on tornado: i2c-piix4 (SMBus adapter) is loaded but i2c-dev is
     # not, so no /dev/i2c-* nodes exist and RGB control silently doesn't work.
-    # Enabling this declares and loads i2c-dev to fix exactly that.
+    # Enabling this declares and loads i2c-dev to fix exactly that -- the only
+    # field this module has. No device/color/profile management; see
+    # hardware.rgb in the Module Reference for why.
     enabled: true
