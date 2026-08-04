@@ -1,0 +1,10 @@
+[book]
+authors = ["John Allen"]
+language = "en"
+src = "src"
+title = "DebKit"
+description = "A declarative, state-aware configuration and troubleshooting tool for Debian workstations"
+
+[output.html]
+git-repository-url = "https://github.com/johnjoeallen/debkit"
+edit-url-template = "https://github.com/johnjoeallen/debkit/edit/main/docs/{path}"

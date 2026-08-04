@@ -5,3 +5,4 @@
 # build artifacts
 dist/
 target/
+docs/book/
