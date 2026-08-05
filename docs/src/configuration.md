@@ -1,15 +1,15 @@
 # Configuration
 
 ```bash
-debkit host-config          # create/update ~/.config/debkit/hosts/<hostname>.yaml
-debkit enable hardware.grub # set hardware_grub.enabled: true in ~/.config/debkit/config.yaml
+debkit host-config      # create/update ~/.config/debkit/hosts/<hostname>.yaml
+debkit enable boot.grub # set boot_grub.enabled: true in ~/.config/debkit/config.yaml
 ```
 
 `debkit enable <module>` is a shortcut for the common case of turning a module's gate
 on without hand-editing YAML: it adds or updates the module's section in the per-user
 base config (`~/.config/debkit/config.yaml`), setting `enabled: true`, creating the
 file and the section if either is missing. It only works for modules with a plain
-`enabled: bool` gate — most of them (`hardware.grub`, `network.dns`,
+`enabled: bool` gate — most of them (`boot.grub`, `network.dns`,
 `network.wake_on_lan`, `identity.sudo`, `identity.nis`, `developer.git`,
 `apt.repositories`, `network.tailscale`, `hardware.sleep`, `hardware.rgb`). A few
 modules are gated differently (`identity.pam` gates on
@@ -36,10 +36,10 @@ even a fully empty config tree is a normal, supported state.
 `/etc/debkit/config.yaml` is provisioned by the `.deb` package itself (from
 `config.example.yaml`, as a dpkg conffile — `apt install`/upgrade creates it and
 preserves any local edits across upgrades). DebKit is mostly not a per-user tool: most
-lifecycle modules (`hardware_grub`, `network_*`, `identity_*`, `apt`, `pam`,
+lifecycle modules (`boot_grub`, `network_*`, `identity_*`, `apt`, `pam`,
 `systemd_units`) describe the *machine's* state, not an individual operator's
 preferences, so that's the natural home for them — the board registry is the
-sharpest example (see [hardware.grub](./modules/hardware-grub.md)): which BIOS
+sharpest example (see [boot.grub](./modules/boot-grub.md)): which BIOS
 versions are known-bad on a board has nothing to do with which Unix user runs
 `debkit`. The per-user files remain the right place for genuinely personal
 preferences instead — toolchain/session settings like `npm.version`, `wallpapers`,

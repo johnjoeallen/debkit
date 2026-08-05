@@ -8,7 +8,7 @@
 # Deliberately conservative: fabricating board/BIOS compatibility data without
 # verified sourcing would be worse than shipping none -- a wrong "known-affected"
 # entry either causes false alarms on hardware that's actually fine, or false
-# confidence on hardware that isn't. hardware.grub's memory-capacity check
+# confidence on hardware that isn't. boot.grub's memory-capacity check
 # still works fully without any entries here; this registry only adds the
 # separate known-affected-BIOS lookup, plus a per-board recommended_reboot_mode,
 # on top.
@@ -25,7 +25,7 @@
 #
 # Matched on normalized board_vendor/board_name (case-folded,
 # whitespace-collapsed, common vendor-suffix stripping -- see
-# modules::hardware_grub::normalize_board_field). affected_bios_versions is
+# modules::boot_grub::normalize_board_field). affected_bios_versions is
 # an exact-match list, not a range: vendor BIOS version strings (MSI's
 # "2.AC3", for example) aren't a consistently orderable scheme.
 #

@@ -96,7 +96,7 @@ pub trait Module {
     fn description(&self) -> &'static str;
 
     /// The config section key this module's plain `enabled: bool` gate lives under
-    /// (e.g. `"hardware_grub"` for `hardware.grub`, `"sudo_nopass"` for
+    /// (e.g. `"boot_grub"` for `boot.grub`, `"sudo_nopass"` for
     /// `identity.sudo`) — used by `debkit enable <module>` to know where to write
     /// `enabled: true`. `None` (the default) covers both genuinely diagnostic-only
     /// modules with no config section at all (`core.inspect`, `network.dhcp`, ...)

@@ -509,7 +509,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, "hardware.grub", "devbox", &plan).unwrap();
+        let staged = stage_plan_under(&base, "boot.grub", "devbox", &plan).unwrap();
         assert_eq!(staged.files.len(), 1);
         let file = &staged.files[0];
         assert_eq!(file.target, target);
@@ -535,7 +535,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, "hardware.grub", "devbox", &plan).unwrap();
+        let staged = stage_plan_under(&base, "boot.grub", "devbox", &plan).unwrap();
         let file = &staged.files[0];
         let pristine_path = file.pristine_path.as_ref().expect("target existed");
         assert_eq!(fs::read_to_string(pristine_path).unwrap(), "original\n");
@@ -576,7 +576,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, "hardware.grub", "devbox", &plan).unwrap();
+        let staged = stage_plan_under(&base, "boot.grub", "devbox", &plan).unwrap();
         assert!(staged.files.is_empty());
         assert_eq!(staged.skipped_actions.len(), 3);
         assert!(staged.skipped_actions[0].contains("update-grub"));
@@ -601,7 +601,7 @@ mod tests {
             },
         );
 
-        let staged = stage_plan_under(&base, "hardware.grub", "devbox", &plan).unwrap();
+        let staged = stage_plan_under(&base, "boot.grub", "devbox", &plan).unwrap();
         assert!(staged.root.starts_with(&base));
         assert!(staged.root.ends_with(&staged.run_id));
         let file = &staged.files[0];
@@ -618,8 +618,8 @@ mod tests {
     fn two_stage_plan_runs_get_different_run_ids() {
         let base = temp_dir("stage_unique_run_ids");
         let plan = ChangePlan::new();
-        let first = stage_plan_under(&base, "hardware.grub", "devbox", &plan).unwrap();
-        let second = stage_plan_under(&base, "hardware.grub", "devbox", &plan).unwrap();
+        let first = stage_plan_under(&base, "boot.grub", "devbox", &plan).unwrap();
+        let second = stage_plan_under(&base, "boot.grub", "devbox", &plan).unwrap();
         assert_ne!(first.run_id, second.run_id);
     }
 
