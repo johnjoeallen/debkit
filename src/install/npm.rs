@@ -77,6 +77,7 @@ pub fn uninstall() -> anyhow::Result<()> {
         managed_program_path_for_home(&home, "node"),
         managed_program_path_for_home(&home, "npm"),
         managed_program_path_for_home(&home, "npx"),
+        managed_program_path_for_home(&home, "claude"),
         managed_program_path_for_home(&home, "codex"),
     ];
 

@@ -7,6 +7,7 @@
   - [Git](./installers/git.md)
   - [Git Prompt](./installers/git-prompt.md)
   - [Node.js / npm](./installers/npm.md)
+  - [Claude Code CLI](./installers/claude.md)
   - [Codex CLI](./installers/codex.md)
   - [ripgrep](./installers/ripgrep.md)
   - [Rust](./installers/rust.md)

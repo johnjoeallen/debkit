@@ -23,6 +23,7 @@ a typo in this list won't abort the rest of the run):
 | `essentials` | `base`, `dev-base`, `dev_base` | [Essentials](./essentials.md) |
 | `git` | | [Git](./git.md) |
 | `npm` | | [Node.js / npm](./npm.md) |
+| `claude` | | [Claude Code CLI](./claude.md) — not in the default list above |
 | `codex` | | [Codex CLI](./codex.md) |
 | `ripgrep` | | [ripgrep](./ripgrep.md) — not in the default list above; `ripgrep` ships as a default [essentials](./essentials.md) package instead |
 | `rust` | | [Rust](./rust.md) (never with `--reinstall`) |

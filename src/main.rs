@@ -1,5 +1,6 @@
 mod config;
 mod engine;
+mod info;
 mod install;
 mod modules;
 mod package;
@@ -28,6 +29,10 @@ enum Commands {
     Enable(EnableArgs),
     #[command(about = "List installable DebKit targets")]
     List,
+    #[command(about = "Show the description for an install target or module by name")]
+    Desc(DescArgs),
+    #[command(about = "Show the full documentation page for an install target or module by name")]
+    Info(InfoArgs),
     #[command(about = "Build DebKit packages")]
     Package(PackageCommand),
     #[command(about = "Install a DebKit target")]
@@ -56,6 +61,18 @@ enum Commands {
 struct EnableArgs {
     /// Dotted module name, e.g. `boot.grub`.
     module: String,
+}
+
+#[derive(Debug, Args)]
+struct DescArgs {
+    /// Install target name (e.g. `claude`) or dotted module name (e.g. `boot.grub`).
+    name: String,
+}
+
+#[derive(Debug, Args)]
+struct InfoArgs {
+    /// Install target name (e.g. `claude`) or dotted module name (e.g. `boot.grub`).
+    name: String,
 }
 
 #[derive(Debug, Args)]
@@ -132,6 +149,7 @@ struct UninstallCommand {
 
 #[derive(Debug, Subcommand)]
 enum InstallSubcommand {
+    Claude(InstallClaudeArgs),
     Codex(InstallCodexArgs),
     Essentials,
     Git,
@@ -179,6 +197,7 @@ struct AddNisSlaveArgs {
 
 #[derive(Debug, Subcommand)]
 enum UninstallSubcommand {
+    Claude,
     Codex,
     Npm,
     Ripgrep,
@@ -210,6 +229,12 @@ struct InstallRustArgs {
 struct InstallNpmArgs {
     #[arg(long, default_value = "latest")]
     version: String,
+}
+
+#[derive(Debug, Args)]
+struct InstallClaudeArgs {
+    #[arg(long = "node-version", default_value = "latest")]
+    node_version: String,
 }
 
 #[derive(Debug, Args)]
@@ -302,6 +327,8 @@ fn run() -> anyhow::Result<()> {
             install::list::run();
             run_list_modules();
         }
+        Commands::Desc(args) => run_desc(&args.name)?,
+        Commands::Info(args) => run_info(&args.name)?,
         Commands::Package(pkg) => match pkg.command {
             PackageSubcommand::Deb(args) => {
                 let output = package::deb::run(package::deb::Options {
@@ -315,6 +342,9 @@ fn run() -> anyhow::Result<()> {
             }
         },
         Commands::Install(install) => match install.command {
+            InstallSubcommand::Claude(args) => {
+                install::claude::run(args.node_version)?;
+            }
             InstallSubcommand::Codex(args) => {
                 install::codex::run(args.node_version)?;
             }
@@ -373,6 +403,9 @@ fn run() -> anyhow::Result<()> {
             }
         },
         Commands::Uninstall(uninstall) => match uninstall.command {
+            UninstallSubcommand::Claude => {
+                install::claude::uninstall()?;
+            }
             UninstallSubcommand::Codex => {
                 install::codex::uninstall()?;
             }
@@ -445,6 +478,28 @@ fn run_list_modules() {
             width = width
         );
     }
+}
+
+fn run_desc(name: &str) -> anyhow::Result<()> {
+    if let Some(target) = install::targets().iter().find(|target| target.name == name) {
+        println!("{}: {}", target.name, target.description);
+        return Ok(());
+    }
+
+    if let Some(module) = modules::find(name) {
+        println!("{}: {}", module.name(), module.description());
+        return Ok(());
+    }
+
+    bail!("no install target or module named `{name}` (see `debkit list`)");
+}
+
+fn run_info(name: &str) -> anyhow::Result<()> {
+    let doc = info::doc_for(name).with_context(|| {
+        format!("no documentation page for `{name}` (see `debkit list`, or `debkit desc {name}`)")
+    })?;
+    print!("{doc}");
+    Ok(())
 }
 
 fn run_inspect(args: &ModuleArgs) -> anyhow::Result<()> {
@@ -910,6 +965,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_install_claude() {
+        let cli = Cli::try_parse_from(["debkit", "install", "claude"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Claude(_)
+            })
+        ));
+    }
+
+    #[test]
     fn parses_install_codex() {
         let cli = Cli::try_parse_from(["debkit", "install", "codex"]).unwrap();
         assert!(matches!(
@@ -995,6 +1061,18 @@ mod tests {
             Commands::Install(InstallCommand {
                 command: InstallSubcommand::Npm(InstallNpmArgs { version })
             }) if version == "24.12.0"
+        ));
+    }
+
+    #[test]
+    fn parses_install_claude_with_node_version() {
+        let cli = Cli::try_parse_from(["debkit", "install", "claude", "--node-version", "latest"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install(InstallCommand {
+                command: InstallSubcommand::Claude(InstallClaudeArgs { node_version })
+            }) if node_version == "latest"
         ));
     }
 
@@ -1132,6 +1210,83 @@ mod tests {
         assert!(matches!(
             cli.command,
             Commands::Enable(EnableArgs { module }) if module == "boot.grub"
+        ));
+    }
+
+    #[test]
+    fn parses_desc_for_install_target() {
+        let cli = Cli::try_parse_from(["debkit", "desc", "claude"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Desc(DescArgs { name }) if name == "claude"
+        ));
+    }
+
+    #[test]
+    fn parses_desc_for_module() {
+        let cli = Cli::try_parse_from(["debkit", "desc", "boot.grub"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Desc(DescArgs { name }) if name == "boot.grub"
+        ));
+    }
+
+    #[test]
+    fn run_desc_resolves_install_target() {
+        run_desc("claude").unwrap();
+    }
+
+    #[test]
+    fn run_desc_resolves_module() {
+        run_desc("boot.grub").unwrap();
+    }
+
+    #[test]
+    fn run_desc_rejects_unknown_name() {
+        assert!(run_desc("not-a-real-target-or-module").is_err());
+    }
+
+    #[test]
+    fn parses_info_for_install_target() {
+        let cli = Cli::try_parse_from(["debkit", "info", "claude"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Info(InfoArgs { name }) if name == "claude"
+        ));
+    }
+
+    #[test]
+    fn parses_info_for_module() {
+        let cli = Cli::try_parse_from(["debkit", "info", "boot.grub"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Info(InfoArgs { name }) if name == "boot.grub"
+        ));
+    }
+
+    #[test]
+    fn run_info_resolves_install_target() {
+        run_info("claude").unwrap();
+    }
+
+    #[test]
+    fn run_info_resolves_module() {
+        run_info("boot.grub").unwrap();
+    }
+
+    #[test]
+    fn run_info_rejects_unknown_name() {
+        assert!(run_info("not-a-real-target-or-module").is_err());
+    }
+
+    #[test]
+    fn parses_uninstall_claude() {
+        let cli = Cli::try_parse_from(["debkit", "uninstall", "claude"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Uninstall(UninstallCommand {
+                command: UninstallSubcommand::Claude
+            })
         ));
     }
 

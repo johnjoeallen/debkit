@@ -1,4 +1,5 @@
 pub mod apt;
+pub mod claude;
 pub mod codex;
 pub mod essentials;
 pub mod foundation;
@@ -72,6 +73,13 @@ pub fn targets() -> &'static [InstallTarget] {
             supports_uninstall: false,
             supports_configure: true,
             description: "NIS server packages",
+        },
+        InstallTarget {
+            name: "claude",
+            supports_install: true,
+            supports_uninstall: true,
+            supports_configure: false,
+            description: "Claude Code CLI via npm",
         },
         InstallTarget {
             name: "codex",
