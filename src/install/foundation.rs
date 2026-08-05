@@ -10,6 +10,11 @@ pub fn run(config: &DebkitConfig) -> anyhow::Result<()> {
 
     for target in &config.foundation.install {
         match target.as_str() {
+            "claude" => {
+                println!("Installing foundation target: claude");
+                super::claude::run(config.npm.version.clone())
+                    .context("failed to install foundation target `claude`")?;
+            }
             "codex" => {
                 println!("Installing foundation target: codex");
                 super::codex::run(config.npm.version.clone())
