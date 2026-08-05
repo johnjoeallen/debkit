@@ -54,7 +54,7 @@ enum Commands {
 
 #[derive(Debug, Args)]
 struct EnableArgs {
-    /// Dotted module name, e.g. `hardware.grub`.
+    /// Dotted module name, e.g. `boot.grub`.
     module: String,
 }
 
@@ -1128,10 +1128,10 @@ mod tests {
 
     #[test]
     fn parses_enable() {
-        let cli = Cli::try_parse_from(["debkit", "enable", "hardware.grub"]).unwrap();
+        let cli = Cli::try_parse_from(["debkit", "enable", "boot.grub"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Enable(EnableArgs { module }) if module == "hardware.grub"
+            Commands::Enable(EnableArgs { module }) if module == "boot.grub"
         ));
     }
 
@@ -1256,7 +1256,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            Cli::try_parse_from(["debkit", "apply", "hardware.grub", "--dry-run"])
+            Cli::try_parse_from(["debkit", "apply", "boot.grub", "--dry-run"])
                 .unwrap()
                 .command,
             Commands::Apply(ApplyArgs {
@@ -1269,7 +1269,7 @@ mod tests {
             Cli::try_parse_from([
                 "debkit",
                 "apply",
-                "hardware.grub",
+                "boot.grub",
                 "--from-run",
                 "e4327830-23a3-4d74-be12-34016a0a71e6"
             ])

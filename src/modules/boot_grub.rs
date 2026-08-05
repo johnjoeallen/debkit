@@ -14,6 +14,12 @@ const GRUB_CFG_PATH: &str = "/boot/grub/grub.cfg";
 const GRUB_CMDLINE_KEY: &str = "GRUB_CMDLINE_LINUX_DEFAULT";
 const GRUB_GFXMODE_KEY: &str = "GRUB_GFXMODE";
 const GRUB_GFXPAYLOAD_LINUX_KEY: &str = "GRUB_GFXPAYLOAD_LINUX";
+/// The only value this module ever writes for `GRUB_GFXPAYLOAD_LINUX`, regardless of
+/// what `video_mode` is set to: "keep" tells the kernel/KMS to keep whatever
+/// framebuffer mode GRUB itself set up (per `GRUB_GFXMODE`) rather than resetting to
+/// its own default, which is the standard recommendation and avoids needing this
+/// value to track `video_mode`'s `<columns>x<rows>` exactly.
+const GRUB_GFXPAYLOAD_VALUE: &str = "keep";
 const GRUB_TIMEOUT_KEY: &str = "GRUB_TIMEOUT";
 
 /// Board capacities in ascending order. Used to round an observed value up to the
@@ -52,7 +58,7 @@ pub struct BoardCompatibilityEntry {
     #[serde(default)]
     pub note: String,
     /// This board's recommended `reboot_mode` ("cold"/"warm"), used when
-    /// `hardware_grub.reboot_mode` isn't explicitly set in config — an explicit
+    /// `boot_grub.reboot_mode` isn't explicitly set in config — an explicit
     /// config value always wins over this. Optional: not every entry needs a
     /// recommendation (e.g. one purely documenting a known-affected BIOS version
     /// whose real fix is a flash, not a reboot-mode change).
@@ -91,10 +97,13 @@ struct BoardRegistryFile {
 /// `patch_grub_cmdline_default`'s doc comment.
 ///
 /// This module also manages the display resolution GRUB hands off at boot:
-/// `GRUB_GFXMODE` (the GRUB menu's own resolution, before the kernel loads) and
-/// `GRUB_GFXPAYLOAD_LINUX` (the resolution handed to the kernel/KMS when it boots),
-/// both set from a single `video_mode` config value in the simple `<columns>x<rows>`
-/// form (e.g. `"1024x768"`) rather than a raw VESA mode number. Unlike `reboot_mode`,
+/// `GRUB_GFXMODE` (the GRUB menu's own resolution, before the kernel loads), set from
+/// `video_mode` in the simple `<columns>x<rows>` form (e.g. `"1024x768"`) rather than
+/// a raw VESA mode number, and `GRUB_GFXPAYLOAD_LINUX` (what the kernel/KMS does with
+/// that mode at boot), always written as the literal `"keep"` — telling the kernel to
+/// keep whatever framebuffer GRUB already set up rather than resetting it — regardless
+/// of `video_mode`'s actual value; see `GRUB_GFXPAYLOAD_VALUE`. Both are only touched
+/// at all when `video_mode` is declared. Unlike `reboot_mode`,
 /// which is only ever written once one of the findings above is actually confirmed
 /// (see `needs_grub_mitigation`), `video_mode` has no detection step — declaring it is
 /// itself a direct, sufficient instruction to apply it. Unlike `reboot=`, these are
@@ -110,7 +119,7 @@ struct BoardRegistryFile {
 /// `GRUB_TIMEOUT`) are still combined into a single `/etc/default/grub` `WriteFile`
 /// per `plan()` run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HardwareGrubObservation {
+struct BootGrubObservation {
     dmi_available: bool,
     board_vendor: Option<String>,
     board_vendor_normalized: Option<String>,
@@ -144,7 +153,7 @@ struct HardwareGrubObservation {
     /// (commonly root-only permissions; `debkit diagnose` run unprivileged can't
     /// confirm this).
     grub_cfg_declares_reboot_arg: Option<bool>,
-    /// `Some(<columns>x<rows>)` when `hardware_grub.video_mode` is explicitly declared
+    /// `Some(<columns>x<rows>)` when `boot_grub.video_mode` is explicitly declared
     /// in config — unlike `reboot_desired_arg`, this has no fallback/registry default,
     /// so `None` here means "not requested," not "unknown."
     video_desired_mode: Option<String>,
@@ -154,15 +163,17 @@ struct HardwareGrubObservation {
     /// stance, a standalone `KEY=value` line has no ambiguity to guess around — absent
     /// just means absent.
     grub_default_declares_gfxmode: Option<bool>,
-    /// Same shape as `grub_default_declares_gfxmode` but for `GRUB_GFXPAYLOAD_LINUX`.
+    /// Same shape as `grub_default_declares_gfxmode`, but checks for the fixed
+    /// `GRUB_GFXPAYLOAD_LINUX=keep` (`GRUB_GFXPAYLOAD_VALUE`) rather than mirroring
+    /// `video_desired_mode`'s value.
     grub_default_declares_gfxpayload: Option<bool>,
     /// Whether the generated `/boot/grub/grub.cfg` reflects the desired
     /// `gfxmode=<mode>` setting. `None` both when `video_desired_mode` is `None` and
     /// when the file couldn't be read (commonly root-only permissions).
     grub_cfg_declares_gfxmode: Option<bool>,
-    /// Same shape as `grub_cfg_declares_gfxmode` but for `gfxpayload=<mode>`.
+    /// Same shape as `grub_cfg_declares_gfxmode`, but for the fixed `gfxpayload=keep`.
     grub_cfg_declares_gfxpayload: Option<bool>,
-    /// `Some(<seconds>)` when `hardware_grub.timeout` is explicitly declared in
+    /// `Some(<seconds>)` when `boot_grub.timeout` is explicitly declared in
     /// config — like `video_desired_mode`, this has no fallback/registry default, so
     /// `None` here means "not requested," not "unknown."
     timeout_desired: Option<u32>,
@@ -175,19 +186,19 @@ struct HardwareGrubObservation {
     grub_cfg_declares_timeout: Option<bool>,
 }
 
-pub struct HardwareGrub;
+pub struct BootGrub;
 
-impl Module for HardwareGrub {
+impl Module for BootGrub {
     fn name(&self) -> &'static str {
-        "hardware.grub"
+        "boot.grub"
     }
 
     fn config_key(&self) -> Option<&'static str> {
-        Some("hardware_grub")
+        Some("boot_grub")
     }
 
     fn description(&self) -> &'static str {
-        "AM5 board/BIOS identification, known-affected-BIOS registry, memory-capacity check, GRUB reboot=/GFXMODE/GFXPAYLOAD boot parameters"
+        "AM5 board/BIOS identification, known-affected-BIOS registry, memory-capacity check, GRUB reboot=/GFXMODE/GFXPAYLOAD/TIMEOUT boot parameters"
     }
 
     fn discover(&self, ctx: &Context) -> anyhow::Result<Observation> {
@@ -198,15 +209,13 @@ impl Module for HardwareGrub {
             .as_ref()
             .is_some_and(|entry| bios_version_is_listed(dmi.bios_version.as_deref(), entry));
 
-        let effective_mode = effective_reboot_mode(
-            &ctx.config.hardware_grub.reboot_mode,
-            registry_match.as_ref(),
-        );
+        let effective_mode =
+            effective_reboot_mode(&ctx.config.boot_grub.reboot_mode, registry_match.as_ref());
         let reboot_desired_arg =
-            desired_reboot_arg(&effective_mode, &ctx.config.hardware_grub.reboot_type);
+            desired_reboot_arg(&effective_mode, &ctx.config.boot_grub.reboot_type);
         let reboot_token = format!("reboot={reboot_desired_arg}");
-        let video_desired_mode = non_empty(&ctx.config.hardware_grub.video_mode);
-        let timeout_desired = ctx.config.hardware_grub.timeout;
+        let video_desired_mode = non_empty(&ctx.config.boot_grub.video_mode);
+        let timeout_desired = ctx.config.boot_grub.timeout;
 
         let grub_default_current = fs::read_to_string(GRUB_DEFAULT_PATH).ok();
         let grub_default_raw_value = grub_default_current
@@ -220,10 +229,10 @@ impl Module for HardwareGrub {
                 grub_default_simple_key_value(content, GRUB_GFXMODE_KEY).as_deref() == Some(mode)
             })
         });
-        let grub_default_declares_gfxpayload = video_desired_mode.as_deref().and_then(|mode| {
+        let grub_default_declares_gfxpayload = video_desired_mode.as_ref().and_then(|_| {
             grub_default_current.as_deref().map(|content| {
                 grub_default_simple_key_value(content, GRUB_GFXPAYLOAD_LINUX_KEY).as_deref()
-                    == Some(mode)
+                    == Some(GRUB_GFXPAYLOAD_VALUE)
             })
         });
         let grub_default_declares_timeout = timeout_desired.and_then(|seconds| {
@@ -242,10 +251,10 @@ impl Module for HardwareGrub {
                 .as_deref()
                 .map(|content| grub_cfg_declares_token(content, &format!("gfxmode={mode}")))
         });
-        let grub_cfg_declares_gfxpayload = video_desired_mode.as_deref().and_then(|mode| {
-            grub_cfg_content
-                .as_deref()
-                .map(|content| grub_cfg_declares_token(content, &format!("gfxpayload={mode}")))
+        let grub_cfg_declares_gfxpayload = video_desired_mode.as_ref().and_then(|_| {
+            grub_cfg_content.as_deref().map(|content| {
+                grub_cfg_declares_token(content, &format!("gfxpayload={GRUB_GFXPAYLOAD_VALUE}"))
+            })
         });
         let grub_cfg_declares_timeout = timeout_desired.and_then(|seconds| {
             grub_cfg_content
@@ -253,7 +262,7 @@ impl Module for HardwareGrub {
                 .map(|content| grub_cfg_declares_token(content, &format!("timeout={seconds}")))
         });
 
-        let data = HardwareGrubObservation {
+        let data = BootGrubObservation {
             dmi_available: dmi.available,
             board_vendor: dmi.board_vendor,
             board_vendor_normalized: dmi.board_vendor_normalized.clone(),
@@ -309,15 +318,15 @@ impl Module for HardwareGrub {
     }
 
     fn diagnose(&self, ctx: &Context, observation: &Observation) -> Diagnosis {
-        if !ctx.config.hardware_grub.enabled {
+        if !ctx.config.boot_grub.enabled {
             return Diagnosis::compliant();
         }
 
-        let data: HardwareGrubObservation = match serde_json::from_value(observation.data.clone()) {
+        let data: BootGrubObservation = match serde_json::from_value(observation.data.clone()) {
             Ok(data) => data,
             Err(err) => {
                 return Diagnosis::mismatch(vec![format!(
-                    "failed to read hardware.grub observation: {err}"
+                    "failed to read boot.grub observation: {err}"
                 )]);
             }
         };
@@ -341,7 +350,7 @@ impl Module for HardwareGrub {
             ));
         }
 
-        let expected = ctx.config.hardware_grub.expected_memory_gib;
+        let expected = ctx.config.boot_grub.expected_memory_gib;
         if expected > 0 {
             match data.observed_memory_gib {
                 Some(observed) if observed != expected => {
@@ -355,13 +364,13 @@ impl Module for HardwareGrub {
             }
         }
 
-        if needs_grub_mitigation(ctx.config.hardware_grub.expected_memory_gib, &data) {
+        if needs_grub_mitigation(ctx.config.boot_grub.expected_memory_gib, &data) {
             let effective_mode = effective_reboot_mode(
-                &ctx.config.hardware_grub.reboot_mode,
+                &ctx.config.boot_grub.reboot_mode,
                 data.registry_match.as_ref(),
             );
             let desired_arg =
-                desired_reboot_arg(&effective_mode, &ctx.config.hardware_grub.reboot_type);
+                desired_reboot_arg(&effective_mode, &ctx.config.boot_grub.reboot_type);
             match data.grub_default_declares_reboot_arg {
                 Some(false) => findings.push(format!(
                     "{GRUB_DEFAULT_PATH} does not declare `reboot={desired_arg}` — a cold reboot forces full memory retraining, the actual mitigation for the findings above"
@@ -373,14 +382,14 @@ impl Module for HardwareGrub {
             }
             if data.grub_cfg_declares_reboot_arg == Some(false) {
                 findings.push(format!(
-                    "{GRUB_CFG_PATH} does not reflect `reboot={desired_arg}` yet — run `update-grub` (or `debkit apply hardware.grub`)"
+                    "{GRUB_CFG_PATH} does not reflect `reboot={desired_arg}` yet — run `update-grub` (or `debkit apply boot.grub`)"
                 ));
             }
         }
 
         // Unlike reboot_mode above, video_mode has no detection step of its own --
         // declaring it in config is itself a sufficient, direct instruction to apply
-        // it (see the field's doc comment on HardwareGrubConfig).
+        // it (see the field's doc comment on BootGrubConfig).
         if let Some(mode) = &data.video_desired_mode {
             match data.grub_default_declares_gfxmode {
                 Some(false) => findings.push(format!(
@@ -393,21 +402,21 @@ impl Module for HardwareGrub {
             }
             match data.grub_default_declares_gfxpayload {
                 Some(false) => findings.push(format!(
-                    "{GRUB_DEFAULT_PATH} does not declare `{GRUB_GFXPAYLOAD_LINUX_KEY}={mode}`"
+                    "{GRUB_DEFAULT_PATH} does not declare `{GRUB_GFXPAYLOAD_LINUX_KEY}={GRUB_GFXPAYLOAD_VALUE}`"
                 )),
                 None => findings.push(format!(
-                    "could not confirm whether {GRUB_DEFAULT_PATH} declares `{GRUB_GFXPAYLOAD_LINUX_KEY}={mode}`"
+                    "could not confirm whether {GRUB_DEFAULT_PATH} declares `{GRUB_GFXPAYLOAD_LINUX_KEY}={GRUB_GFXPAYLOAD_VALUE}`"
                 )),
                 Some(true) => {}
             }
             if data.grub_cfg_declares_gfxmode == Some(false) {
                 findings.push(format!(
-                    "{GRUB_CFG_PATH} does not reflect `{GRUB_GFXMODE_KEY}={mode}` yet — run `update-grub` (or `debkit apply hardware.grub`)"
+                    "{GRUB_CFG_PATH} does not reflect `{GRUB_GFXMODE_KEY}={mode}` yet — run `update-grub` (or `debkit apply boot.grub`)"
                 ));
             }
             if data.grub_cfg_declares_gfxpayload == Some(false) {
                 findings.push(format!(
-                    "{GRUB_CFG_PATH} does not reflect `{GRUB_GFXPAYLOAD_LINUX_KEY}={mode}` yet — run `update-grub` (or `debkit apply hardware.grub`)"
+                    "{GRUB_CFG_PATH} does not reflect `{GRUB_GFXPAYLOAD_LINUX_KEY}={GRUB_GFXPAYLOAD_VALUE}` yet — run `update-grub` (or `debkit apply boot.grub`)"
                 ));
             }
         }
@@ -426,7 +435,7 @@ impl Module for HardwareGrub {
             }
             if data.grub_cfg_declares_timeout == Some(false) {
                 findings.push(format!(
-                    "{GRUB_CFG_PATH} does not reflect `{GRUB_TIMEOUT_KEY}={seconds}` yet — run `update-grub` (or `debkit apply hardware.grub`)"
+                    "{GRUB_CFG_PATH} does not reflect `{GRUB_TIMEOUT_KEY}={seconds}` yet — run `update-grub` (or `debkit apply boot.grub`)"
                 ));
             }
         }
@@ -445,11 +454,11 @@ impl Module for HardwareGrub {
         diagnosis: &Diagnosis,
     ) -> anyhow::Result<ChangePlan> {
         let mut plan = ChangePlan::new();
-        if !ctx.config.hardware_grub.enabled || diagnosis.compliant {
+        if !ctx.config.boot_grub.enabled || diagnosis.compliant {
             return Ok(plan);
         }
 
-        let data: HardwareGrubObservation = serde_json::from_value(observation.data.clone())?;
+        let data: BootGrubObservation = serde_json::from_value(observation.data.clone())?;
 
         // See module doc comment: the memory-capacity and known-affected-BIOS
         // findings themselves have no automated fix. reboot= is only ever patched
@@ -458,8 +467,7 @@ impl Module for HardwareGrub {
         // reboot= is left alone entirely, even if it doesn't already say reboot=cold.
         // video_mode has no such detection step: declaring it is itself the
         // instruction to apply it (see the diagnose() comment above).
-        let reboot_active =
-            needs_grub_mitigation(ctx.config.hardware_grub.expected_memory_gib, &data);
+        let reboot_active = needs_grub_mitigation(ctx.config.boot_grub.expected_memory_gib, &data);
 
         let reboot_needs_write =
             reboot_active && data.grub_default_declares_reboot_arg == Some(false);
@@ -516,12 +524,14 @@ impl Module for HardwareGrub {
                 declared.push(format!("`{GRUB_GFXMODE_KEY}={mode}`"));
             }
             if gfxpayload_needs_write {
-                let mode = data
-                    .video_desired_mode
-                    .as_deref()
-                    .expect("gfxpayload_needs_write implies video_desired_mode is Some");
-                content = set_grub_default_simple_key(&content, GRUB_GFXPAYLOAD_LINUX_KEY, mode);
-                declared.push(format!("`{GRUB_GFXPAYLOAD_LINUX_KEY}={mode}`"));
+                content = set_grub_default_simple_key(
+                    &content,
+                    GRUB_GFXPAYLOAD_LINUX_KEY,
+                    GRUB_GFXPAYLOAD_VALUE,
+                );
+                declared.push(format!(
+                    "`{GRUB_GFXPAYLOAD_LINUX_KEY}={GRUB_GFXPAYLOAD_VALUE}`"
+                ));
             }
             if timeout_needs_write {
                 let seconds = data
@@ -556,16 +566,16 @@ impl Module for HardwareGrub {
     }
 
     fn verify(&self, ctx: &Context) -> anyhow::Result<Vec<VerificationResult>> {
-        if !ctx.config.hardware_grub.enabled {
+        if !ctx.config.boot_grub.enabled {
             return Ok(vec![VerificationResult::skipped(
-                "hardware.grub",
+                "boot.grub",
                 "disabled in config",
             )]);
         }
 
         let mut checks = Vec::new();
 
-        let expected = ctx.config.hardware_grub.expected_memory_gib;
+        let expected = ctx.config.boot_grub.expected_memory_gib;
         if expected == 0 {
             checks.push(VerificationResult::skipped(
                 "installed memory matches expected capacity",
@@ -614,12 +624,9 @@ impl Module for HardwareGrub {
             )),
         }
 
-        let effective_mode = effective_reboot_mode(
-            &ctx.config.hardware_grub.reboot_mode,
-            registry_match.as_ref(),
-        );
-        let desired_arg =
-            desired_reboot_arg(&effective_mode, &ctx.config.hardware_grub.reboot_type);
+        let effective_mode =
+            effective_reboot_mode(&ctx.config.boot_grub.reboot_mode, registry_match.as_ref());
+        let desired_arg = desired_reboot_arg(&effective_mode, &ctx.config.boot_grub.reboot_type);
         let reboot_token = format!("reboot={desired_arg}");
         let check_name = format!("{GRUB_CFG_PATH} declares {reboot_token}");
         let grub_cfg_content = read_grub_cfg();
@@ -630,7 +637,7 @@ impl Module for HardwareGrub {
             Some(true) => checks.push(VerificationResult::pass(check_name)),
             Some(false) => checks.push(VerificationResult::fail(
                 check_name,
-                "not present in the generated config — run `update-grub` or `debkit apply hardware.grub`",
+                "not present in the generated config — run `update-grub` or `debkit apply boot.grub`",
             )),
             None => checks.push(VerificationResult::skipped(
                 check_name,
@@ -638,14 +645,18 @@ impl Module for HardwareGrub {
             )),
         }
 
-        match non_empty(&ctx.config.hardware_grub.video_mode) {
+        match non_empty(&ctx.config.boot_grub.video_mode) {
             Some(mode) => {
-                for (key, label) in [
-                    (GRUB_GFXMODE_KEY, "gfxmode"),
-                    (GRUB_GFXPAYLOAD_LINUX_KEY, "gfxpayload"),
+                for (key, label, value) in [
+                    (GRUB_GFXMODE_KEY, "gfxmode", mode.as_str()),
+                    (
+                        GRUB_GFXPAYLOAD_LINUX_KEY,
+                        "gfxpayload",
+                        GRUB_GFXPAYLOAD_VALUE,
+                    ),
                 ] {
-                    let token = format!("{label}={mode}");
-                    let check_name = format!("{GRUB_CFG_PATH} declares {key}={mode}");
+                    let token = format!("{label}={value}");
+                    let check_name = format!("{GRUB_CFG_PATH} declares {key}={value}");
                     match grub_cfg_content
                         .as_deref()
                         .map(|content| grub_cfg_declares_token(content, &token))
@@ -653,7 +664,7 @@ impl Module for HardwareGrub {
                         Some(true) => checks.push(VerificationResult::pass(check_name)),
                         Some(false) => checks.push(VerificationResult::fail(
                             check_name,
-                            "not present in the generated config — run `update-grub` or `debkit apply hardware.grub`",
+                            "not present in the generated config — run `update-grub` or `debkit apply boot.grub`",
                         )),
                         None => checks.push(VerificationResult::skipped(
                             check_name,
@@ -668,7 +679,7 @@ impl Module for HardwareGrub {
             )),
         }
 
-        match ctx.config.hardware_grub.timeout {
+        match ctx.config.boot_grub.timeout {
             Some(seconds) => {
                 let token = format!("timeout={seconds}");
                 let check_name = format!("{GRUB_CFG_PATH} declares {GRUB_TIMEOUT_KEY}={seconds}");
@@ -679,7 +690,7 @@ impl Module for HardwareGrub {
                     Some(true) => checks.push(VerificationResult::pass(check_name)),
                     Some(false) => checks.push(VerificationResult::fail(
                         check_name,
-                        "not present in the generated config — run `update-grub` or `debkit apply hardware.grub`",
+                        "not present in the generated config — run `update-grub` or `debkit apply boot.grub`",
                     )),
                     None => checks.push(VerificationResult::skipped(
                         check_name,
@@ -814,7 +825,7 @@ fn desired_reboot_arg(mode: &str, kind: &str) -> String {
 }
 
 /// Resolves the actual `reboot_mode` to use: an explicit, non-empty
-/// `hardware_grub.reboot_mode` in config always wins; otherwise falls back to the
+/// `boot_grub.reboot_mode` in config always wins; otherwise falls back to the
 /// matched board's `recommended_reboot_mode` from the registry, if any; otherwise
 /// falls back to `DEFAULT_REBOOT_MODE` ("cold"). This is what lets the registry
 /// "just know" the right value for a recognized board without requiring the user to
@@ -847,7 +858,7 @@ fn effective_reboot_mode(
 /// `reboot_mode`/`reboot_type` and enabling the module isn't, by itself, sufficient
 /// reason to modify grub — there has to be an actual signal first, whether that's a
 /// live mismatch or a registry entry that already knows this board.
-fn needs_grub_mitigation(expected_memory_gib: u32, data: &HardwareGrubObservation) -> bool {
+fn needs_grub_mitigation(expected_memory_gib: u32, data: &BootGrubObservation) -> bool {
     if data.current_bios_is_known_affected {
         return true;
     }
@@ -1136,7 +1147,7 @@ mod tests {
 
     #[test]
     fn module_name_matches_config_section() {
-        assert_eq!(HardwareGrub.name(), "hardware.grub");
+        assert_eq!(BootGrub.name(), "boot.grub");
     }
 
     #[test]
@@ -1191,7 +1202,7 @@ mod tests {
     #[test]
     fn registry_from_path_merges_and_overrides_embedded() {
         let dir = std::env::temp_dir().join(format!(
-            "debkit_hardware_grub_test_{}_{}",
+            "debkit_boot_grub_test_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1227,7 +1238,7 @@ mod tests {
     #[test]
     fn merge_board_registry_lets_a_later_tier_override_an_earlier_one() {
         let dir = std::env::temp_dir().join(format!(
-            "debkit_hardware_grub_tier_test_{}_{}",
+            "debkit_boot_grub_tier_test_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1283,12 +1294,12 @@ mod tests {
         }
     }
 
-    fn observation(data: HardwareGrubObservation) -> Observation {
+    fn observation(data: BootGrubObservation) -> Observation {
         Observation::new(serde_json::to_value(&data).unwrap())
     }
 
-    fn base_data() -> HardwareGrubObservation {
-        HardwareGrubObservation {
+    fn base_data() -> BootGrubObservation {
+        BootGrubObservation {
             dmi_available: true,
             board_vendor: Some("Micro-Star International Co., Ltd.".to_string()),
             board_vendor_normalized: Some("micro-star international".to_string()),
@@ -1320,7 +1331,7 @@ mod tests {
 
     fn config(enabled: bool) -> crate::config::DebkitConfig {
         let mut config = crate::config::DebkitConfig::default();
-        config.hardware_grub.enabled = enabled;
+        config.boot_grub.enabled = enabled;
         config
     }
 
@@ -1331,9 +1342,9 @@ mod tests {
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(base_data()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(base_data()));
         assert!(diagnosis.compliant);
-        let plan = HardwareGrub
+        let plan = BootGrub
             .plan(&ctx, &observation(base_data()), &diagnosis)
             .unwrap();
         assert!(plan.is_empty());
@@ -1355,12 +1366,10 @@ mod tests {
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data.clone()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data.clone()));
         assert!(!diagnosis.compliant);
         assert!(diagnosis.findings[0].contains("known-affected version"));
-        let plan = HardwareGrub
-            .plan(&ctx, &observation(data), &diagnosis)
-            .unwrap();
+        let plan = BootGrub.plan(&ctx, &observation(data), &diagnosis).unwrap();
         assert!(plan.is_empty(), "no automated fix exists for this finding");
     }
 
@@ -1369,12 +1378,12 @@ mod tests {
         let mut data = base_data();
         data.observed_memory_gib = Some(64);
         let mut config = config(true);
-        config.hardware_grub.expected_memory_gib = 128;
+        config.boot_grub.expected_memory_gib = 128;
         let ctx = Context {
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(!diagnosis.compliant);
         assert!(diagnosis.findings[0].contains("does not match declared"));
     }
@@ -1382,12 +1391,12 @@ mod tests {
     #[test]
     fn compliant_when_memory_matches_expected() {
         let mut config = config(true);
-        config.hardware_grub.expected_memory_gib = 128;
+        config.boot_grub.expected_memory_gib = 128;
         let ctx = Context {
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(base_data()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(base_data()));
         assert!(diagnosis.compliant);
     }
 
@@ -1396,12 +1405,12 @@ mod tests {
         let mut data = base_data();
         data.observed_memory_gib = Some(64);
         let config = config(true);
-        assert_eq!(config.hardware_grub.expected_memory_gib, 0);
+        assert_eq!(config.boot_grub.expected_memory_gib, 0);
         let ctx = Context {
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
@@ -1414,7 +1423,7 @@ mod tests {
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
@@ -1577,9 +1586,9 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
 
     fn config_with_reboot_args(mode: &str, kind: &str) -> crate::config::DebkitConfig {
         let mut config = crate::config::DebkitConfig::default();
-        config.hardware_grub.enabled = true;
-        config.hardware_grub.reboot_mode = mode.to_string();
-        config.hardware_grub.reboot_type = kind.to_string();
+        config.boot_grub.enabled = true;
+        config.boot_grub.reboot_mode = mode.to_string();
+        config.boot_grub.reboot_type = kind.to_string();
         config
     }
 
@@ -1589,7 +1598,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
         expected_memory_gib: u32,
     ) -> crate::config::DebkitConfig {
         let mut config = config_with_reboot_args(mode, kind);
-        config.hardware_grub.expected_memory_gib = expected_memory_gib;
+        config.boot_grub.expected_memory_gib = expected_memory_gib;
         config
     }
 
@@ -1600,7 +1609,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(base_data()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(base_data()));
         assert!(diagnosis.compliant);
     }
 
@@ -1622,11 +1631,9 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data.clone()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data.clone()));
         assert!(diagnosis.compliant);
-        let plan = HardwareGrub
-            .plan(&ctx, &observation(data), &diagnosis)
-            .unwrap();
+        let plan = BootGrub.plan(&ctx, &observation(data), &diagnosis).unwrap();
         assert!(
             plan.is_empty(),
             "no confirmed problem -- grub must not be touched"
@@ -1645,7 +1652,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
@@ -1668,11 +1675,9 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data.clone()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data.clone()));
         assert!(!diagnosis.compliant);
-        let plan = HardwareGrub
-            .plan(&ctx, &observation(data), &diagnosis)
-            .unwrap();
+        let plan = BootGrub.plan(&ctx, &observation(data), &diagnosis).unwrap();
         assert!(
             !plan.is_empty(),
             "a recognized board with a registry recommendation should get the mitigation"
@@ -1702,7 +1707,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
@@ -1719,7 +1724,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data.clone()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data.clone()));
         assert!(!diagnosis.compliant);
         assert!(
             diagnosis
@@ -1753,7 +1758,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(!diagnosis.compliant);
         assert!(
             diagnosis
@@ -1773,7 +1778,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(
             !diagnosis
                 .findings
@@ -1785,8 +1790,8 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
 
     fn config_with_video_mode(mode: &str) -> crate::config::DebkitConfig {
         let mut config = crate::config::DebkitConfig::default();
-        config.hardware_grub.enabled = true;
-        config.hardware_grub.video_mode = mode.to_string();
+        config.boot_grub.enabled = true;
+        config.boot_grub.video_mode = mode.to_string();
         config
     }
 
@@ -1810,7 +1815,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data.clone()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data.clone()));
         assert!(!diagnosis.compliant);
         assert!(
             diagnosis
@@ -1818,12 +1823,36 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
                 .iter()
                 .any(|f| f.contains("does not declare `GRUB_GFXMODE=1024x768`"))
         );
+        // GRUB_GFXPAYLOAD_LINUX is always "keep", regardless of video_mode's value.
         assert!(
             diagnosis
                 .findings
                 .iter()
-                .any(|f| f.contains("does not declare `GRUB_GFXPAYLOAD_LINUX=1024x768`"))
+                .any(|f| f.contains("does not declare `GRUB_GFXPAYLOAD_LINUX=keep`"))
         );
+
+        let plan = BootGrub.plan(&ctx, &observation(data), &diagnosis).unwrap();
+        assert!(
+            plan.changes
+                .iter()
+                .any(|change| change.description.contains("GRUB_GFXMODE=1024x768"))
+        );
+        assert!(
+            plan.changes
+                .iter()
+                .any(|change| change.description.contains("GRUB_GFXPAYLOAD_LINUX=keep"))
+        );
+        let Change::WriteFile { content, .. } = &plan
+            .changes
+            .iter()
+            .find(|change| matches!(change.change, Change::WriteFile { .. }))
+            .unwrap()
+            .change
+        else {
+            panic!("expected a WriteFile change");
+        };
+        assert!(content.contains("GRUB_GFXPAYLOAD_LINUX=keep"));
+        assert!(!content.contains("GRUB_GFXPAYLOAD_LINUX=1024x768"));
     }
 
     #[test]
@@ -1840,7 +1869,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
@@ -1856,14 +1885,14 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
     fn config_with_timeout(seconds: u32) -> crate::config::DebkitConfig {
         let mut config = crate::config::DebkitConfig::default();
-        config.hardware_grub.enabled = true;
-        config.hardware_grub.timeout = Some(seconds);
+        config.boot_grub.enabled = true;
+        config.boot_grub.timeout = Some(seconds);
         config
     }
 
@@ -1882,7 +1911,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data.clone()));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data.clone()));
         assert!(!diagnosis.compliant);
         assert!(
             diagnosis
@@ -1891,9 +1920,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
                 .any(|f| f.contains("does not declare `GRUB_TIMEOUT=15`"))
         );
 
-        let plan = HardwareGrub
-            .plan(&ctx, &observation(data), &diagnosis)
-            .unwrap();
+        let plan = BootGrub.plan(&ctx, &observation(data), &diagnosis).unwrap();
         assert!(
             plan.changes
                 .iter()
@@ -1913,7 +1940,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
@@ -1928,7 +1955,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(diagnosis.compliant);
     }
 
@@ -1946,7 +1973,7 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
             hostname: "tornado".to_string(),
             config: &config,
         };
-        let diagnosis = HardwareGrub.diagnose(&ctx, &observation(data));
+        let diagnosis = BootGrub.diagnose(&ctx, &observation(data));
         assert!(!diagnosis.compliant);
         assert!(
             diagnosis

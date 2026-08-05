@@ -50,7 +50,7 @@ pub struct DebkitConfig {
     pub network_interfaces: NetworkInterfacesConfig,
     pub tailscale: TailscaleConfig,
     pub dns: DnsConfig,
-    pub hardware_grub: HardwareGrubConfig,
+    pub boot_grub: BootGrubConfig,
     pub hardware_sleep: HardwareSleepConfig,
     pub hardware_rgb: HardwareRgbConfig,
 }
@@ -506,14 +506,14 @@ pub const DEFAULT_REBOOT_MODE: &str = "cold";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct HardwareGrubConfig {
+pub struct BootGrubConfig {
     pub enabled: bool,
     /// Declared installed RAM capacity, in GiB, rounded to the nearest common size (8,
     /// 16, 32, 64, 96, 128, ...). 0 means "not declared, don't check." Compared against
     /// `/proc/meminfo`'s `MemTotal` (also rounded up to the nearest common capacity, to
     /// absorb the gap between nominal and OS-visible RAM) — a coarse but root-free,
     /// no-`dmidecode` signal that catches a DIMM going undetected after a reboot/BIOS
-    /// change, per modules::hardware_grub.
+    /// change, per modules::boot_grub.
     pub expected_memory_gib: u32,
     /// `"cold"`, `"warm"`, or empty (default — not explicitly declared). The first
     /// component of the kernel's `reboot=` parameter (see `man 2 reboot`,
@@ -524,7 +524,7 @@ pub struct HardwareGrubConfig {
     /// full retraining.
     ///
     /// Left empty, the effective mode falls back to the matched board's
-    /// `recommended_reboot_mode` in the board registry (see modules::hardware_grub),
+    /// `recommended_reboot_mode` in the board registry (see modules::boot_grub),
     /// and only then to `DEFAULT_REBOOT_MODE` ("cold") if neither says anything — an
     /// explicit value here always wins over the registry. Validated in
     /// `config::validate_config` since it's written into a file `update-grub` sources
@@ -536,14 +536,15 @@ pub struct HardwareGrubConfig {
     /// Also validated.
     pub reboot_type: String,
     /// The boot-time display resolution, set into `/etc/default/grub`'s
-    /// `GRUB_GFXMODE` (the GRUB menu's own resolution) and `GRUB_GFXPAYLOAD_LINUX`
-    /// (the resolution handed to the kernel/KMS at boot) — both from this one value,
-    /// kept in sync. Simple `"<columns>x<rows>"` form (e.g. `"1024x768"`), or empty
-    /// (default — not declared, don't touch grub for this); both components must be
-    /// plain positive-integer pixel counts. This is GRUB's own resolution mechanism,
-    /// not the kernel's legacy `vga=` boot parameter (which used raw VESA mode
-    /// numbers and lived inside `GRUB_CMDLINE_LINUX_DEFAULT` alongside `reboot=`) —
-    /// `GRUB_GFXMODE`/`GRUB_GFXPAYLOAD_LINUX` are their own standalone lines. Unlike
+    /// `GRUB_GFXMODE` (the GRUB menu's own resolution). Simple `"<columns>x<rows>"`
+    /// form (e.g. `"1024x768"`), or empty (default — not declared, don't touch grub
+    /// for this); both components must be plain positive-integer pixel counts. This is
+    /// GRUB's own resolution mechanism, not the kernel's legacy `vga=` boot parameter
+    /// (which used raw VESA mode numbers and lived inside `GRUB_CMDLINE_LINUX_DEFAULT`
+    /// alongside `reboot=`) — `GRUB_GFXMODE` is its own standalone line. Declaring this
+    /// also causes `GRUB_GFXPAYLOAD_LINUX` (what the kernel/KMS does with that mode at
+    /// boot) to be set to the fixed literal `"keep"` rather than mirroring this value
+    /// — see `modules::boot_grub::GRUB_GFXPAYLOAD_VALUE`. Unlike
     /// `reboot_mode`, which this module only ever writes when it has independently
     /// confirmed evidence a mitigation is needed (see `needs_grub_mitigation`),
     /// declaring `video_mode` here is itself a direct, sufficient instruction to apply

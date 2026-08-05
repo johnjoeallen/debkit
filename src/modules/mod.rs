@@ -1,7 +1,7 @@
 pub mod apt_repositories;
+pub mod boot_grub;
 pub mod core_inspect;
 pub mod developer_git;
-pub mod hardware_grub;
 pub mod hardware_rgb;
 pub mod hardware_sleep;
 pub mod identity_nis;
@@ -37,7 +37,7 @@ pub fn registry() -> Vec<Box<dyn Module>> {
         Box::new(systemd_units::SystemdUnits),
         Box::new(developer_git::DeveloperGit),
         Box::new(apt_repositories::AptRepositories),
-        Box::new(hardware_grub::HardwareGrub),
+        Box::new(boot_grub::BootGrub),
         Box::new(hardware_sleep::HardwareSleep),
         Box::new(hardware_rgb::HardwareRgb),
     ]

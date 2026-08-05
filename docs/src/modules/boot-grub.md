@@ -1,4 +1,4 @@
-# hardware.grub
+# boot.grub
 
 Board/BIOS identification scoped narrowly to detection + normalization + a
 known-affected-BIOS lookup — not a general hardware compatibility matcher. Motivated
@@ -37,7 +37,7 @@ whitespace-collapsed, and stripped of common vendor-suffix noise (`Co., Ltd.`,
 
 ```yaml
 debkit:
-  hardware_grub:
+  boot_grub:
     enabled: false
     # Declared installed RAM, in GiB, rounded to the nearest common size (8,
     # 16, 32, 64, 96, 128, ...). 0 (the default) means "not declared, don't
@@ -63,12 +63,12 @@ debkit:
     # are set, or just reboot_mode alone when reboot_type is empty.
     reboot_type: ""
     # Boot-time display resolution, set into GRUB_GFXMODE (the GRUB menu's
-    # own resolution) and GRUB_GFXPAYLOAD_LINUX (the resolution handed to
-    # the kernel/KMS at boot) -- both from this one value, kept in sync.
-    # Simple "<columns>x<rows>" form, e.g. "1024x768", or empty (default --
-    # not declared). Unlike reboot_mode, this has no confirmed-evidence
-    # gate: declaring it is itself the instruction to apply it. See
-    # "video_mode values" below.
+    # own resolution). Simple "<columns>x<rows>" form, e.g. "1024x768", or
+    # empty (default -- not declared). Declaring this also sets
+    # GRUB_GFXPAYLOAD_LINUX (the resolution handed to the kernel/KMS at
+    # boot) to the fixed value "keep" rather than mirroring this value.
+    # Unlike reboot_mode, this has no confirmed-evidence gate: declaring it
+    # is itself the instruction to apply it. See "video_mode values" below.
     video_mode: ""
     # Seconds GRUB waits at the boot menu before booting the default entry,
     # set into the standalone GRUB_TIMEOUT line. null/unset (the default)
@@ -118,19 +118,21 @@ boards:
 `video_mode` drives GRUB's own display-resolution mechanism, not the kernel's legacy
 `vga=` boot parameter (raw VESA mode numbers, embedded in
 `GRUB_CMDLINE_LINUX_DEFAULT` alongside `reboot=`). Instead it sets two standalone
-`/etc/default/grub` lines from one value, kept in sync:
+`/etc/default/grub` lines:
 
 - **`GRUB_GFXMODE`** — the resolution of the GRUB menu itself, before the kernel even
-  loads.
-- **`GRUB_GFXPAYLOAD_LINUX`** — the resolution handed to the kernel/KMS framebuffer
-  when it boots.
+  loads. Set to `video_mode`'s literal value.
+- **`GRUB_GFXPAYLOAD_LINUX`** — what the kernel/KMS framebuffer does with that mode at
+  boot. Always set to the fixed literal `"keep"` (not `video_mode`'s value) — telling
+  the kernel to keep whatever framebuffer GRUB already set up rather than resetting
+  it, the standard recommendation and independent of the actual resolution chosen.
 
-The only accepted form (enforced by `config::validate_config`) is
+`video_mode`'s only accepted form (enforced by `config::validate_config`) is
 `"<columns>x<rows>"` — both components plain positive-integer pixel counts, e.g.
 `"1024x768"` or `"1920x1080"`. No VESA mode numbers, no depth suffix, no GRUB special
 words (`auto`/`keep`/`text`) — deliberately the simplest form that covers the common
-case; if you need one of those, set them by hand in `/etc/default/grub` instead of
-through `video_mode`.
+case; if you need one of those for `GRUB_GFXMODE` itself, set it by hand in
+`/etc/default/grub` instead of through `video_mode`.
 
 ## The grub write, precisely
 

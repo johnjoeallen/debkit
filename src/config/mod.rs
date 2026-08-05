@@ -78,7 +78,7 @@ pub struct EnableSectionResult {
 /// Sets `debkit.<section>.enabled: true` in the per-user base config
 /// (`~/.config/debkit/config.yaml`, i.e. `config_path_for_home`) — the target for
 /// `debkit enable <module>`. `section` is a raw config-schema key (e.g.
-/// `"hardware_grub"`), already resolved from a module's dotted name by the caller
+/// `"boot_grub"`), already resolved from a module's dotted name by the caller
 /// (see `Module::config_key`) — this function doesn't know about modules at all, only
 /// the raw YAML shape, matching `add_nis_slave_to_raw_config`'s layering. Creates the
 /// file (and its parent directory) if it doesn't exist yet, and creates the section
@@ -362,28 +362,25 @@ fn validate_config(config: &DebkitConfig) -> anyhow::Result<()> {
     ) {
         bail!("`hardware_sleep.desired_mem_sleep` must be one of `s2idle`, `deep`, or empty");
     }
-    if !matches!(
-        config.hardware_grub.reboot_mode.as_str(),
-        "" | "cold" | "warm"
-    ) {
-        bail!("`hardware_grub.reboot_mode` must be one of `cold`, `warm`, or empty");
+    if !matches!(config.boot_grub.reboot_mode.as_str(), "" | "cold" | "warm") {
+        bail!("`boot_grub.reboot_mode` must be one of `cold`, `warm`, or empty");
     }
     if !matches!(
-        config.hardware_grub.reboot_type.as_str(),
+        config.boot_grub.reboot_type.as_str(),
         "" | "bios" | "acpi" | "kbd" | "triple" | "efi" | "pci"
     ) {
         bail!(
-            "`hardware_grub.reboot_type` must be one of `bios`, `acpi`, `kbd`, `triple`, `efi`, `pci`, or empty"
+            "`boot_grub.reboot_type` must be one of `bios`, `acpi`, `kbd`, `triple`, `efi`, `pci`, or empty"
         );
     }
-    if !is_valid_video_mode(config.hardware_grub.video_mode.as_str()) {
-        bail!("`hardware_grub.video_mode` must be `<columns>x<rows>` (e.g. `1024x768`) or empty");
+    if !is_valid_video_mode(config.boot_grub.video_mode.as_str()) {
+        bail!("`boot_grub.video_mode` must be `<columns>x<rows>` (e.g. `1024x768`) or empty");
     }
     Ok(())
 }
 
 /// `video_mode` sets GRUB_GFXMODE/GRUB_GFXPAYLOAD_LINUX in /etc/default/grub (see
-/// modules::hardware_grub), in the simple `<columns>x<rows>` form rather than a raw
+/// modules::boot_grub), in the simple `<columns>x<rows>` form rather than a raw
 /// resolution/depth mode number -- both components must be plain positive-integer
 /// pixel counts. Same shell-injection reasoning as `reboot_mode`/`reboot_type`: this
 /// value is written into a file `update-grub` sources as a shell script.
@@ -628,14 +625,14 @@ mod tests {
         let global_path = global_dir.join("config.yaml");
         fs::write(
             &global_path,
-            "debkit:\n  hardware_grub:\n    enabled: true\n    reboot_mode: cold\n",
+            "debkit:\n  boot_grub:\n    enabled: true\n    reboot_mode: cold\n",
         )
         .unwrap();
 
         let value = merged_value(&global_path, &home, &hostname).unwrap();
         let config = deserialize_config(value).unwrap();
-        assert!(config.hardware_grub.enabled);
-        assert_eq!(config.hardware_grub.reboot_mode, "cold");
+        assert!(config.boot_grub.enabled);
+        assert_eq!(config.boot_grub.reboot_mode, "cold");
     }
 
     #[test]
@@ -646,24 +643,20 @@ mod tests {
         let global_path = global_dir.join("config.yaml");
         fs::write(
             &global_path,
-            "debkit:\n  hardware_grub:\n    enabled: true\n    reboot_mode: cold\n",
+            "debkit:\n  boot_grub:\n    enabled: true\n    reboot_mode: cold\n",
         )
         .unwrap();
 
         let base_path = config_path_for_home(&home);
         fs::create_dir_all(base_path.parent().unwrap()).unwrap();
-        fs::write(
-            &base_path,
-            "debkit:\n  hardware_grub:\n    reboot_mode: warm\n",
-        )
-        .unwrap();
+        fs::write(&base_path, "debkit:\n  boot_grub:\n    reboot_mode: warm\n").unwrap();
 
         let value = merged_value(&global_path, &home, &hostname).unwrap();
         let config = deserialize_config(value).unwrap();
         // The user's own file wins on the conflicting key...
-        assert_eq!(config.hardware_grub.reboot_mode, "warm");
+        assert_eq!(config.boot_grub.reboot_mode, "warm");
         // ...but a global-only key the user file never mentions still comes through.
-        assert!(config.hardware_grub.enabled);
+        assert!(config.boot_grub.enabled);
     }
 
     #[test]
@@ -674,29 +667,21 @@ mod tests {
         let global_path = global_dir.join("config.yaml");
         fs::write(
             &global_path,
-            "debkit:\n  hardware_grub:\n    reboot_mode: cold\n",
+            "debkit:\n  boot_grub:\n    reboot_mode: cold\n",
         )
         .unwrap();
 
         let base_path = config_path_for_home(&home);
         fs::create_dir_all(base_path.parent().unwrap()).unwrap();
-        fs::write(
-            &base_path,
-            "debkit:\n  hardware_grub:\n    reboot_mode: warm\n",
-        )
-        .unwrap();
+        fs::write(&base_path, "debkit:\n  boot_grub:\n    reboot_mode: warm\n").unwrap();
 
         let host_path = host_config_path_for_home(&home, &hostname);
         fs::create_dir_all(host_path.parent().unwrap()).unwrap();
-        fs::write(
-            &host_path,
-            "debkit:\n  hardware_grub:\n    reboot_mode: \"\"\n",
-        )
-        .unwrap();
+        fs::write(&host_path, "debkit:\n  boot_grub:\n    reboot_mode: \"\"\n").unwrap();
 
         let value = merged_value(&global_path, &home, &hostname).unwrap();
         let config = deserialize_config(value).unwrap();
-        assert_eq!(config.hardware_grub.reboot_mode, "");
+        assert_eq!(config.boot_grub.reboot_mode, "");
     }
 
     #[test]
@@ -707,18 +692,18 @@ mod tests {
 
         let value = merged_value(&nonexistent_global, &home, &hostname).unwrap();
         let config = deserialize_config(value).unwrap();
-        assert!(!config.hardware_grub.enabled);
+        assert!(!config.boot_grub.enabled);
     }
 
     #[test]
     fn enable_section_creates_the_file_and_section_when_absent() {
         let home = temp_home("enable_fresh");
-        let result = enable_section_for_home(&home, "hardware_grub").unwrap();
+        let result = enable_section_for_home(&home, "boot_grub").unwrap();
         assert!(result.changed);
         assert_eq!(result.path, config_path_for_home(&home));
 
         let config = load_or_init_for_home(&home).unwrap();
-        assert!(config.hardware_grub.enabled);
+        assert!(config.boot_grub.enabled);
     }
 
     #[test]
@@ -728,24 +713,24 @@ mod tests {
         fs::create_dir_all(config_path.parent().unwrap()).unwrap();
         fs::write(
             &config_path,
-            "debkit:\n  hardware_grub:\n    reboot_mode: cold\n  wake_on_lan:\n    enabled: true\n",
+            "debkit:\n  boot_grub:\n    reboot_mode: cold\n  wake_on_lan:\n    enabled: true\n",
         )
         .unwrap();
 
-        let result = enable_section_for_home(&home, "hardware_grub").unwrap();
+        let result = enable_section_for_home(&home, "boot_grub").unwrap();
         assert!(result.changed);
 
         let config = load_or_init_for_home(&home).unwrap();
-        assert!(config.hardware_grub.enabled);
-        assert_eq!(config.hardware_grub.reboot_mode, "cold");
+        assert!(config.boot_grub.enabled);
+        assert_eq!(config.boot_grub.reboot_mode, "cold");
         assert!(config.wake_on_lan.enabled);
     }
 
     #[test]
     fn enable_section_is_idempotent() {
         let home = temp_home("enable_idempotent");
-        enable_section_for_home(&home, "hardware_grub").unwrap();
-        let result = enable_section_for_home(&home, "hardware_grub").unwrap();
+        enable_section_for_home(&home, "boot_grub").unwrap();
+        let result = enable_section_for_home(&home, "boot_grub").unwrap();
         assert!(!result.changed);
     }
 
