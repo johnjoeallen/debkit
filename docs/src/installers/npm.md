@@ -10,8 +10,7 @@ tarballs — not from apt or nvm — into a DebKit-managed per-user location own
 invoking user, and ensures the shell init sources `$HOME/.local/bin` onto `PATH`.
 Nothing here ever runs as root, so nothing it installs ends up root-owned either —
 unlike a system apt/`sudo npm install -g` Node, every later `npm install -g <pkg>`
-(including [Claude Code](./claude.md) and [Codex](./codex.md), below) stays
-unprivileged too. Re-running with the
+(including [Codex](./codex.md), below) stays unprivileged too. Re-running with the
 same version is a no-op. Each version gets its own directory (nothing is deleted when
 you install a different one), but a `current` symlink always points at whichever
 version was installed most recently — that symlink is what ends up on `PATH`, so
@@ -24,6 +23,7 @@ debkit:
     version: latest
 ```
 
-`foundation.install: [npm, ...]` uses `npm.version` from config. `claude`/`codex`
-(below) and `foundation`'s `claude`/`codex` targets all install npm as a prerequisite
-using `config.npm.version`, via the same managed install path.
+`foundation.install: [npm, ...]` uses `npm.version` from config. `codex` (below) and
+`foundation`'s `codex` target both install npm as a prerequisite using
+`config.npm.version`, via the same managed install path. [Claude Code](./claude.md)
+does not use npm — see its own page.

@@ -79,7 +79,7 @@ pub fn targets() -> &'static [InstallTarget] {
             supports_install: true,
             supports_uninstall: true,
             supports_configure: false,
-            description: "Claude Code CLI via npm",
+            description: "Claude Code CLI via the native installer",
         },
         InstallTarget {
             name: "codex",

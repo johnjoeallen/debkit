@@ -233,8 +233,10 @@ struct InstallNpmArgs {
 
 #[derive(Debug, Args)]
 struct InstallClaudeArgs {
-    #[arg(long = "node-version", default_value = "latest")]
-    node_version: String,
+    /// Version or release channel (`latest` or `stable`) passed through to the native
+    /// installer script, or a specific version number.
+    #[arg(long, default_value = "latest")]
+    version: String,
 }
 
 #[derive(Debug, Args)]
@@ -343,7 +345,7 @@ fn run() -> anyhow::Result<()> {
         },
         Commands::Install(install) => match install.command {
             InstallSubcommand::Claude(args) => {
-                install::claude::run(args.node_version)?;
+                install::claude::run(args.version)?;
             }
             InstallSubcommand::Codex(args) => {
                 install::codex::run(args.node_version)?;
@@ -1065,14 +1067,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_install_claude_with_node_version() {
-        let cli = Cli::try_parse_from(["debkit", "install", "claude", "--node-version", "latest"])
+    fn parses_install_claude_with_version() {
+        let cli = Cli::try_parse_from(["debkit", "install", "claude", "--version", "stable"])
             .unwrap();
         assert!(matches!(
             cli.command,
             Commands::Install(InstallCommand {
-                command: InstallSubcommand::Claude(InstallClaudeArgs { node_version })
-            }) if node_version == "latest"
+                command: InstallSubcommand::Claude(InstallClaudeArgs { version })
+            }) if version == "stable"
         ));
     }
 

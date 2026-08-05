@@ -1,22 +1,27 @@
 # Claude Code CLI
 
 ```bash
-debkit install claude [--node-version <version>]
+debkit install claude [--version <version-or-channel>]
 debkit uninstall claude
 ```
 
-Installs the [Claude Code CLI](https://www.npmjs.com/package/@anthropic-ai/claude-code)
-entirely as the invoking user — **root is never involved**, neither for the initial
-install nor for updating it later. `install claude` first ensures the `npm` target
-(above) is installed at `--node-version` (default `latest`), then runs `npm install -g
-@anthropic-ai/claude-code` through DebKit's managed npm with `NPM_CONFIG_PREFIX`
-pointed at a per-user directory. `-g` here means "global to that per-user prefix," not
-"global to the system" — it's the same mechanism `nvm`/`fnm`-style per-user Node
-installs use, not the classic `sudo npm install -g` that leaves files root-owned and
-makes every future `npm update`/`npm install -g` need `sudo` again. Re-running `debkit
-install claude` to pick up a new version is the identical unprivileged command;
-`uninstall` runs the matching `npm uninstall -g` and verifies the binary is actually
-gone afterward.
+Installs the [Claude Code CLI](https://claude.com/product/claude-code) using
+Anthropic's own native installer — **root is never involved**, and this target does
+*not* go through npm or [Node.js](./npm.md) at all: `install claude` runs the
+equivalent of `curl -fsSL https://claude.ai/install.sh | bash`, which downloads a
+prebuilt binary straight to `$HOME/.local/bin/claude` (symlinked from
+`$HOME/.local/share/claude/versions/`). `--version` (default `latest`) is passed
+through to the installer script and accepts either a release channel (`latest` or
+`stable`) or a specific version number, e.g. `--version stable` or `--version 2.1.89`.
 
-No config section of its own — `--node-version`/`foundation`'s `claude` target both
-flow through to the same `npm.version`-driven Node.js install described above.
+Re-running `debkit install claude` is a no-op once `claude` is present — the native
+installer manages its own background auto-updates from then on (run `claude update` to
+update it manually, or see [Anthropic's docs](https://code.claude.com/docs/en/setup) for
+disabling auto-update or pinning a version). `uninstall` removes
+`$HOME/.local/bin/claude` and `$HOME/.local/share/claude` (the installed binary
+versions), but deliberately leaves `~/.claude` and `~/.claude.json` (your settings, MCP
+config, and session history) untouched — those aren't part of the install this target
+manages.
+
+No config section of its own, and no `npm`/Node.js prerequisite — `--version`/
+`foundation`'s `claude` target both flow straight into the native installer script.

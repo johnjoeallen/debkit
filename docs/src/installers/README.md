@@ -14,7 +14,7 @@ the registered [Lifecycle Modules](../lifecycle-modules.md).
 | [nis](../nis.md) | `install`, `configure` | NIS client and server packages |
 | [nis-client](../nis.md) | `install`, `configure` | NIS client packages |
 | [nis-server](../nis.md) | `install`, `configure` | NIS server packages |
-| [claude](./claude.md) | `install`, `uninstall` | Claude Code CLI via npm |
+| [claude](./claude.md) | `install`, `uninstall` | Claude Code CLI via the native installer |
 | [codex](./codex.md) | `install`, `uninstall` | OpenAI Codex CLI via npm |
 | [ripgrep](./ripgrep.md) | `install`, `uninstall` | ripgrep recursive search tool |
 | [rust](./rust.md) | `install` | Rust toolchain via rustup |

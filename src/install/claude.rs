@@ -1,24 +1,28 @@
+use std::env;
+use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, bail};
 
-pub fn run(node_version: String) -> anyhow::Result<()> {
-    super::npm::run(super::npm::Options {
-        version: node_version,
-    })
-    .context("failed to install prerequisite target `npm`")?;
+const INSTALL_SCRIPT_URL: &str = "https://claude.ai/install.sh";
 
-    if let Some(claude) = managed_program("claude") {
+pub fn run(version: String) -> anyhow::Result<()> {
+    let version = version.trim();
+    if version.is_empty() {
+        bail!("Claude Code version/channel must not be empty");
+    }
+
+    if let Some(claude) = managed_program() {
         println!("Claude Code already installed:");
         run_command(&claude, &["--version"])?;
         return Ok(());
     }
 
-    install_claude_package()?;
+    install_native(version)?;
 
-    let Some(claude) = managed_program("claude") else {
-        bail!("`claude` was not found on PATH after installation");
+    let Some(claude) = managed_program() else {
+        bail!("`claude` was not found at ~/.local/bin/claude after installation");
     };
 
     println!("Claude Code installation complete:");
@@ -28,59 +32,65 @@ pub fn run(node_version: String) -> anyhow::Result<()> {
 }
 
 pub fn uninstall() -> anyhow::Result<()> {
-    let Some(npm) = managed_program("npm") else {
-        println!("Claude Code is not installed: managed npm was not found.");
-        return Ok(());
-    };
+    let home = home_dir()?;
+    let claude_bin = managed_program_path_for_home(&home);
+    let versions_dir = home.join(".local").join("share").join("claude");
 
-    if managed_program("claude").is_none() {
+    let mut removed_any = false;
+
+    if claude_bin.exists() || fs::symlink_metadata(&claude_bin).is_ok() {
+        fs::remove_file(&claude_bin)
+            .with_context(|| format!("failed to remove {}", claude_bin.display()))?;
+        removed_any = true;
+    }
+
+    if versions_dir.exists() {
+        fs::remove_dir_all(&versions_dir)
+            .with_context(|| format!("failed to remove {}", versions_dir.display()))?;
+        removed_any = true;
+    }
+
+    if !removed_any {
         println!("Claude Code is not installed.");
         return Ok(());
-    }
-
-    let prefix = claude_prefix_dir().context("failed to determine per-user npm prefix")?;
-    let status = Command::new(&npm)
-        .args(["uninstall", "-g", "@anthropic-ai/claude-code"])
-        .env("NPM_CONFIG_PREFIX", &prefix)
-        .status()
-        .with_context(|| format!("failed to start `{}`", npm.display()))?;
-    if !status.success() {
-        bail!(
-            "command `{}` failed with status {}",
-            format!("{} uninstall -g @anthropic-ai/claude-code", npm.display()),
-            status
-        );
-    }
-
-    if let Some(claude) = managed_program("claude") {
-        if claude.exists() {
-            bail!(
-                "`claude` still exists after uninstall at {}",
-                claude.display()
-            );
-        }
     }
 
     println!("Claude Code uninstalled.");
     Ok(())
 }
 
-fn install_claude_package() -> anyhow::Result<()> {
-    let npm = super::npm::managed_program_path("npm")
-        .context("`npm` was not found after installing Node.js")?;
-    let prefix = claude_prefix_dir().context("failed to determine per-user npm prefix")?;
+/// Runs the equivalent of `curl -fsSL https://claude.ai/install.sh | bash -s <version>`
+/// without ever handing a shell an interpolated string, so `version` can't be used for
+/// shell injection: it's piped to `bash` as a plain argv element, which is how the
+/// upstream install docs pass a release channel or specific version through to the
+/// script's own positional-parameter handling.
+fn install_native(version: &str) -> anyhow::Result<()> {
+    let mut curl = Command::new("curl")
+        .args(["-fsSL", INSTALL_SCRIPT_URL])
+        .stdout(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to start `curl -fsSL {INSTALL_SCRIPT_URL}`"))?;
+    let curl_stdout = curl
+        .stdout
+        .take()
+        .context("failed to capture curl output")?;
 
-    let status = Command::new(&npm)
-        .args(["install", "-g", "@anthropic-ai/claude-code"])
-        .env("NPM_CONFIG_PREFIX", &prefix)
+    let mut bash = Command::new("bash");
+    bash.arg("-s");
+    if !version.eq_ignore_ascii_case("latest") {
+        bash.arg(version);
+    }
+    let bash_status = bash
+        .stdin(Stdio::from(curl_stdout))
         .status()
-        .with_context(|| format!("failed to start `{}`", npm.display()))?;
-    if !status.success() {
-        bail!(
-            "command `{}` failed with status {}",
-            format!("{} install -g @anthropic-ai/claude-code", npm.display()),
-            status
-        );
+        .context("failed to start `bash`")?;
+
+    let curl_status = curl.wait().context("failed to wait for `curl`")?;
+    if !curl_status.success() {
+        bail!("`curl -fsSL {INSTALL_SCRIPT_URL}` failed with status {curl_status}");
+    }
+    if !bash_status.success() {
+        bail!("Claude Code install script failed with status {bash_status}");
     }
 
     Ok(())
@@ -101,11 +111,17 @@ fn run_command(program: &PathBuf, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn managed_program(program: &str) -> Option<PathBuf> {
-    let path = super::npm::managed_program_path(program).ok()?;
+fn managed_program() -> Option<PathBuf> {
+    let path = managed_program_path_for_home(&home_dir().ok()?);
     if path.exists() { Some(path) } else { None }
 }
 
-fn claude_prefix_dir() -> anyhow::Result<PathBuf> {
-    super::npm::managed_bin_dir().map(|bin_dir| bin_dir.parent().unwrap().to_path_buf())
+fn managed_program_path_for_home(home: &std::path::Path) -> PathBuf {
+    home.join(".local").join("bin").join("claude")
+}
+
+fn home_dir() -> anyhow::Result<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME environment variable is not set")
 }
