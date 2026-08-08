@@ -21,6 +21,16 @@ const GRUB_GFXPAYLOAD_LINUX_KEY: &str = "GRUB_GFXPAYLOAD_LINUX";
 /// value to track `video_mode`'s `<columns>x<rows>` exactly.
 const GRUB_GFXPAYLOAD_VALUE: &str = "keep";
 const GRUB_TIMEOUT_KEY: &str = "GRUB_TIMEOUT";
+/// The token `/boot/grub/grub.cfg` actually contains for `GRUB_GFXPAYLOAD_LINUX`.
+/// `grub-mkconfig`'s `00_header` doesn't substitute `GRUB_GFXPAYLOAD_LINUX` into a
+/// literal `gfxpayload=<value>` line — it assigns it to an intermediate GRUB-script
+/// variable (`set linux_gfx_mode=<value>`), which each kernel entry later references
+/// at boot time via `set gfxpayload="$linux_gfx_mode"` (a variable expansion, not a
+/// literal value). So confirming the setting reached the generated config means
+/// looking for `linux_gfx_mode=<value>`, not `gfxpayload=<value>` — the literal
+/// `gfxpayload=` text never appears with `GRUB_GFXPAYLOAD_VALUE` on the right-hand
+/// side.
+const GRUB_CFG_LINUX_GFX_MODE_KEY: &str = "linux_gfx_mode";
 
 /// Board capacities in ascending order. Used to round an observed value up to the
 /// nearest "nominal" size a vendor would actually sell/market, absorbing the gap
@@ -253,7 +263,10 @@ impl Module for BootGrub {
         });
         let grub_cfg_declares_gfxpayload = video_desired_mode.as_ref().and_then(|_| {
             grub_cfg_content.as_deref().map(|content| {
-                grub_cfg_declares_token(content, &format!("gfxpayload={GRUB_GFXPAYLOAD_VALUE}"))
+                grub_cfg_declares_token(
+                    content,
+                    &format!("{GRUB_CFG_LINUX_GFX_MODE_KEY}={GRUB_GFXPAYLOAD_VALUE}"),
+                )
             })
         });
         let grub_cfg_declares_timeout = timeout_desired.and_then(|seconds| {
@@ -651,7 +664,7 @@ impl Module for BootGrub {
                     (GRUB_GFXMODE_KEY, "gfxmode", mode.as_str()),
                     (
                         GRUB_GFXPAYLOAD_LINUX_KEY,
-                        "gfxpayload",
+                        GRUB_CFG_LINUX_GFX_MODE_KEY,
                         GRUB_GFXPAYLOAD_VALUE,
                     ),
                 ] {
@@ -1533,6 +1546,24 @@ GRUB_CMDLINE_LINUX=\"acpi=force\"
         let cfg = "linux /boot/vmlinuz root=UUID=x ro quiet reboot=cold\ninitrd /boot/initrd.img\n";
         assert!(grub_cfg_declares_token(cfg, "reboot=cold"));
         assert!(!grub_cfg_declares_token(cfg, "reboot=warm"));
+    }
+
+    #[test]
+    fn grub_cfg_gfxpayload_check_uses_the_linux_gfx_mode_indirection_not_a_literal_gfxpayload_line() {
+        // Real `grub-mkconfig` output for `GRUB_GFXPAYLOAD_LINUX=keep`: 00_header assigns
+        // it to the `linux_gfx_mode` GRUB-script variable, and each kernel entry only
+        // ever references that variable (`set gfxpayload="${1}"` inside a function,
+        // `gfxmode $linux_gfx_mode` as a command) — the literal text `gfxpayload=keep`
+        // never appears, so checking for it is a permanent false negative.
+        let cfg = "    set gfxpayload=\"${1}\"\nset linux_gfx_mode=keep\nexport linux_gfx_mode\n";
+        assert!(grub_cfg_declares_token(
+            cfg,
+            &format!("{GRUB_CFG_LINUX_GFX_MODE_KEY}={GRUB_GFXPAYLOAD_VALUE}")
+        ));
+        assert!(!grub_cfg_declares_token(
+            cfg,
+            &format!("gfxpayload={GRUB_GFXPAYLOAD_VALUE}")
+        ));
     }
 
     #[test]
