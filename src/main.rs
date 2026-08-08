@@ -793,6 +793,17 @@ fn apply_plan_and_record(
         engine::evidence::Status::Changed
     } else {
         println!("verification failed; rolling back");
+        for check in &failed {
+            println!(
+                "  [Fail] {}{}",
+                check.check,
+                check
+                    .detail
+                    .as_deref()
+                    .map(|detail| format!(" — {detail}"))
+                    .unwrap_or_default()
+            );
+        }
         engine::apply::rollback(&applied)?;
         engine::evidence::Status::Error
     };
